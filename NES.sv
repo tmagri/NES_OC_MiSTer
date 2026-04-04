@@ -163,7 +163,8 @@ module emu
 assign ADC_BUS  = 'Z;
 
 assign AUDIO_S   = 0;
-assign AUDIO_L   = sample[15:0];
+
+assign AUDIO_L   = sample;
 assign AUDIO_R   = AUDIO_L;
 assign AUDIO_MIX = 0;
 
@@ -237,6 +238,8 @@ parameter CONF_STR = {
 	"oDE,Savestate Slot,1,2,3,4;",
 	"d7rA,Save state(Alt+F1-F4);",
 	"d7rB,Restore state(F1-F4);",
+	"-;",
+	"O[72:71],CPU Overclock,Off,Mild (60fps),Full (60fps);",
 	"-;",
 	"P1,Audio & Video;",
 	"P1-;",
@@ -433,7 +436,7 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	.paddle_3(pdl[3]),
 
 	.status(status),
-	.status_menumask({(rom_loaded && mapper_has_savestate), en216p, ~status[50], ~raw_serial, (palette2_osd != 3'd5), ~gg_avail, bios_loaded, ~bk_ena}),
+	.status_menumask({(status[72:71] == 2'd0), (rom_loaded && mapper_has_savestate), en216p, ~status[50], ~raw_serial, (palette2_osd != 3'd5), ~gg_avail, bios_loaded, ~bk_ena}),
 	.status_in({status[63:47],ss_slot,status[44:0]}),
 	.status_set(statusUpdate),
 	.info_req(info_req),
@@ -558,8 +561,15 @@ reg init_reset_n = 0;
 always @(posedge clk) if(downloading) init_reset_n <= 1;
 
 wire  [8:0] cycle;
-wire  [8:0] scanline;
+wire  [9:0] scanline;
 wire [15:0] sample;
+
+// -----------------------------------------------------------------------
+// OC Audio Pitch Correction
+// When overclocked the APU runs faster, raising all audio pitch.
+
+
+
 wire  [5:0] color;
 wire  [2:0] joypad_out;
 wire  [1:0] joypad_clock;
@@ -699,7 +709,7 @@ zapper zap (
 	.analog(~status[32] ? joy_analog0 : joy_analog1),
 	.analog_trigger(~status[32] ? joyA[10] : joyB[10]),
 	.cycle(cycle),
-	.scanline(scanline),
+	.scanline(scanline[8:0]),
 	.color(color),
 	.reticle(reticle),
 	.light(light),
@@ -824,10 +834,22 @@ wire reset_nes =
 	bk_loading     ||
 	bk_loading_req ||
 	hold_reset     ||
-	(old_sys_type != effective_sys_type);
+	(old_sys_type != effective_sys_type) ||
+	(|oc_reset_cnt);
 
+// When the user changes the OC setting, hold reset for ~2 frames (~715k clocks at 21MHz)
+// to ensure all pipeline registers, clock dividers and PPU state settle completely.
 reg [1:0] old_sys_type;
-always @(posedge clk) old_sys_type <= effective_sys_type;
+reg [1:0] old_overclock;
+reg [19:0] oc_reset_cnt = 0;
+always @(posedge clk) begin
+    old_sys_type  <= effective_sys_type;
+    old_overclock <= status[72:71];
+    if (old_overclock != status[72:71])
+        oc_reset_cnt <= 20'hFFFFF;      // hold for ~50ms / 2 frames
+    else if (|oc_reset_cnt)
+        oc_reset_cnt <= oc_reset_cnt - 1'd1;
+end
 
 wire [17:0] bram_addr;
 wire [7:0] bram_din;
@@ -879,6 +901,7 @@ NES nes (
 	.debug_dots	     (status[69]),
 	.sys_type        (effective_sys_type),
 	.nes_div         (nes_ce),
+	.ppu_ce_out      (ppu_ce_out),
 	.mapper_flags    (downloading ? 64'd0 : mapper_flags),
 	.gg              (status[20]),
 	.gg_code         (gg_code),
@@ -966,7 +989,8 @@ NES nes (
 	.SAVE_out_rnw            (ss_rnw),           // read = 1, write = 0
 	.SAVE_out_ena            (ss_req),           // one cycle high for each action
 	.SAVE_out_be             (ss_be),
-	.SAVE_out_done           (ss_ack)            // should be one cycle high when write is done or read value is valid
+	.SAVE_out_done           (ss_ack),           // should be one cycle high when write is done or read value is valid
+	.overclock               (status[72:71])     // 0=off, 1=mild 60fps, 2=full 60fps
 );
 
 wire [24:0] cpu_addr;
@@ -1181,21 +1205,22 @@ wire ce_pix;
 wire HSync,VSync,HBlank,VBlank;
 wire [7:0] R,G,B;
 
-wire [1:0] nes_ce_video = corepaused ? videopause_ce : nes_ce;
+wire ppu_ce_out;
+wire ce_in_vid = corepaused ? (~videopause_ce[1] & ~videopause_ce[0]) : ppu_ce_out;
 
 video video
 (
 	.*,
 	.clk(clk),
 	.reset(reset_nes),
-	.cnt(nes_ce_video),
+	.ce_in(ce_in_vid),
 	.sys_type(effective_sys_type),
 	.nes_hsync(nes_hsync),
 	.nes_hblank(nes_hblank),
 	.nes_vsync(nes_vsync),
 	.nes_vblank(nes_vblank),
 	.hold_reset(hold_reset),
-	.count_v(scanline),
+	.count_v(scanline[8:0]),
 	.count_h(cycle),
 	.hide_overscan(pal_video && ~|hide_overscan ? 2'b01 : hide_overscan),
 	.palette(palette2_osd),

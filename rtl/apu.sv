@@ -873,6 +873,7 @@ module APU #(parameter [9:0] SSREG_INDEX_TOP, parameter [9:0] SSREG_INDEX_DMC1, 
 	input  logic        clk,
 	input  logic        PHI2,
 	input  logic        ce,
+	input  logic  [1:0] overclock,     // 0=off, 1=mild (+33%), 2=full (+100%)
 	input  logic        reset,
 	input  logic        cold_reset,
 	input  logic        allow_us,       // Set to 1 to allow ultrasonic frequencies
@@ -942,11 +943,31 @@ module APU #(parameter [9:0] SSREG_INDEX_TOP, parameter [9:0] SSREG_INDEX_DMC1, 
 	// aclk1_d  -- Aclk1, except delayed by 1 cpu cycle exactly. Drives he half/quarter signals and len counter
 	// aclk2    -- Aligned with CPU phi2, also every other frame
 	// write    -- Happens on CPU phi2 (Not M2!). Most of these are latched by one of the above clocks.
+	// -----------------------------------------------------------------------
+	// Overclock Pitch Corrector
+	// To exactly correct pitch AND envelope timing, we must run the entire
+	// APU internal timing at 1x speed without dropping CPU writes.
+	// Since CPU writes depend on the `write` signal (not ce or aclk1), we 
+	// can simply divide the main internal clocks. 
+	// To avoid phasing bugs, pitch_cnt ONLY advances once per full CPU cycle 
+	// (i.e. at the end of the `put` cycle).
+	// -----------------------------------------------------------------------
+	reg [1:0] pitch_cnt = 0;
+	always_ff @(posedge clk) begin
+		if (ce & ~get_or_put)
+			pitch_cnt <= pitch_cnt + 2'd1;
+	end
+
+	wire pitch_ce =
+		(overclock == 2'd1) ? (pitch_cnt != 2'd3) : // Mild: enable 3/4 ticks
+		(overclock == 2'd2) ? (pitch_cnt[0] == 1'b0) : // Full: enable 1/2 ticks
+		1'b1;                                          // Off: all ticks enabled
+
 	logic aclk1, aclk2, aclk1_delayed, phi1;
-	assign aclk1 = ce & get_or_put;          // Defined as the cpu tick when the frame counter increases
-	assign aclk2 = phi2_ce & ~get_or_put;    // Tick on odd cycles, not 50% duty cycle so it covers 2 cpu cycles
-	assign aclk1_delayed = ce & ~get_or_put; // Ticks 1 cpu cycle after frame counter
-	assign phi1 = ce;
+	assign aclk1         = ce & get_or_put & pitch_ce;
+	assign aclk2         = phi2_ce & ~get_or_put & pitch_ce;
+	assign aclk1_delayed = ce & ~get_or_put & pitch_ce;
+	assign phi1          = ce & pitch_ce;
 
 	assign get_ce = aclk1;
 	assign put_ce = aclk1_delayed;

@@ -5,7 +5,7 @@ module video
 (
 	input        clk,
 	input        reset,
-	input  [1:0] cnt,
+	input        ce_in,
 	input  [5:0] color,
 	input  [8:0] count_h,
 	input  [8:0] count_v,
@@ -53,7 +53,7 @@ reg pix_ce;
 wire [5:0] color_ef = reticle[0] ? (reticle[1] ? 6'h21 : 6'h15) : color;
 
 always @(posedge clk) begin
-	pix_ce   <= ~cnt[1] & ~cnt[0];
+	pix_ce   <= ce_in;
 end
 
 assign ce_pix = pix_ce;

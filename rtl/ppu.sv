@@ -174,7 +174,8 @@ module ClockGen #(parameter USE_SAVESTATE = 0) (
 	input reset,
 	input [1:0] sys_type,
 	input is_rendering,
-	output reg [8:0] scanline,
+	input [9:0] extra_lines,  // OC: extra blank scanlines appended to vblank (0=off)
+	output reg [9:0] scanline,
 	output reg [8:0] cycle,
 	output reg is_in_vblank,
 	output end_of_line,
@@ -201,8 +202,8 @@ reg is_even_frame = 0; // 1 indicates even frame.
 assign evenframe = is_even_frame;
 
 // Dendy is 291 to 310
-wire [8:0] vblank_start_sl;
-wire [8:0] vblank_end_sl;
+wire [9:0] vblank_start_sl;
+wire [9:0] vblank_end_sl;
 wire [8:0] vsync_start_sl;
 wire [8:0] last_sl;
 wire skip_en;
@@ -211,23 +212,23 @@ reg [3:0] rendering_sr;
 always_comb begin
 	case (sys_type)
 		2'b00,2'b11: begin // NTSC/Vs.
-			vblank_start_sl = 9'd241;
-			vblank_end_sl   = 9'd260;
+			vblank_start_sl = 10'd241;
+			vblank_end_sl   = 10'd260 + extra_lines;
 			vsync_start_sl  = 9'd244;
 			skip_en         = 1'b1;
 		end
 
 		2'b01: begin       // PAL
-			vblank_start_sl = 9'd241;
-			vblank_end_sl   = 9'd310;
+			vblank_start_sl = 10'd241;
+			vblank_end_sl   = 10'd310 + extra_lines;
 			vsync_start_sl  = 9'd269;
 			skip_en         = 1'b0;
 		end
 
 		2'b10: begin       // Dendy
-			vblank_start_sl = 9'd291; // FIXME vblank doesn't ACTUALLY start here, just the nmi
-			vblank_end_sl   = 9'd310;
-			vsync_start_sl  = 9'd269; // Guessing it's the same as PAL
+			vblank_start_sl = 10'd291;
+			vblank_end_sl   = 10'd310 + extra_lines;
+			vsync_start_sl  = 9'd269;
 			skip_en         = 1'b0;
 		end
 	endcase
@@ -244,10 +245,10 @@ assign end_of_line = at_last_cycle_group && (cycle[3:0] == (skip_pixel ? 3 : 4))
 
 // Confimed with Visual 2C02
 // All vblank clocked registers should have changed and be readable by cycle 1 of 241/261
-assign entering_vblank = (cycle == 0) && scanline == vblank_start_sl;
-assign exiting_vblank = (cycle == 0) && is_pre_render;
+assign entering_vblank = (cycle == 0) && ({1'b0, scanline} == vblank_start_sl);
+assign exiting_vblank  = (cycle == 0) && is_pre_render;
 
-assign is_vbe_sl = (scanline == vblank_end_sl);
+assign is_vbe_sl = ({1'b0, scanline} == vblank_end_sl);
 
 // New value for is_in_vblank flag
 wire new_is_in_vblank = entering_vblank ? 1'b1 : exiting_vblank ? 1'b0 : is_in_vblank;
@@ -264,7 +265,7 @@ generate
 		assign SS_CLKGEN_BACK[  8:0] = cycle;
 		assign SS_CLKGEN_BACK[    9] = is_in_vblank;
 		assign SS_CLKGEN_BACK[13:10] = rendering_sr;
-		assign SS_CLKGEN_BACK[22:14] = scanline;
+		assign SS_CLKGEN_BACK[22:14] = scanline[8:0]; // bit 9 only set in OC extra-blank region
 		assign SS_CLKGEN_BACK[   23] = is_pre_render;
 		assign SS_CLKGEN_BACK[   24] = is_even_frame;
 		assign SS_CLKGEN_BACK[   25] = skip_next;
@@ -328,7 +329,7 @@ end
 
 always @(posedge clk) if (reset) begin
 	if (USE_SAVESTATE) begin
-		scanline          <= SS_CLKGEN[22:14]; // 0;
+		scanline      <= {1'b0, SS_CLKGEN[22:14]}; // restore 9-bit, bit 9 = 0
 		is_pre_render     <= SS_CLKGEN[   23]; // 0;
 		is_even_frame      <= SS_CLKGEN[   24]; // 0; // Resets to 0, the first frame will always end with 341 pixels.
 	end else begin
@@ -337,10 +338,9 @@ always @(posedge clk) if (reset) begin
 		is_even_frame      <= 0; // Resets to 0, the first frame will always end with 341 pixels.
 	end
 end else if (ce && end_of_line) begin
-	// Once the scanline counter reaches end of 260, it gets reset to -1.
-	scanline <= (scanline == vblank_end_sl) ? 9'b111111111 : scanline + 1'd1;
-	// The pre render flag is set while we're on scanline -1.
-	is_pre_render <= (scanline == vblank_end_sl);
+	// Once the scanline counter reaches vblank_end_sl, it gets reset to -1 (pre-render).
+	scanline     <= ({1'b0, scanline} == vblank_end_sl) ? 10'b1111111111 : scanline + 1'd1;
+	is_pre_render <= ({1'b0, scanline} == vblank_end_sl);
 
 	if (scanline == 255)
 		is_even_frame <= ~is_even_frame;
@@ -1254,7 +1254,7 @@ module PPU(
 	output [13:0] vram_a_ex,        // vram address for extra sprites
 	input   [7:0] vram_dbus_in,     // vram input
 	output  [7:0] vram_dout,
-	output  [8:0] scanline,
+	output [9:0] scanline,
 	output  [8:0] cycle,
 	output  [2:0] emphasis,
 	output        hsync,
@@ -1264,6 +1264,7 @@ module PPU(
 	output        short_frame,
 	input         extra_sprites,
 	input  [1:0]  mask,
+	input  [9:0]  extra_lines,  // OC: extra blank scanlines (0 = normal)
 	output        render_ena_out,
 	output        evenframe,
 	// savestates
@@ -1373,6 +1374,7 @@ ClockGen clock(
 	.reset               (reset),
 	.sys_type            (sys_type),
 	.is_rendering        (rendering_regs),
+	.extra_lines         (extra_lines),
 	.scanline            (scanline),
 	.cycle               (cycle),
 	.is_in_vblank        (is_in_vblank),
@@ -1460,7 +1462,7 @@ wire [3:0] bg_pixel = {bg_pixel_noblank[3:2], show_bg_on_pixel ? bg_pixel_noblan
 wire [31:0] oam_bus_ex;
 wire masked_sprites;
 
-wire [8:0] scanline_nopr = is_pre_render_line ? (~|sys_type ? 9'd261 : 9'd311) : scanline;
+wire [9:0] scanline_nopr = is_pre_render_line ? (~|sys_type ? 10'd261 : 10'd311) : scanline;
 
 OAMEval spriteeval (
 	.clk               (clk),
@@ -1469,7 +1471,7 @@ OAMEval spriteeval (
 	.end_of_line       (end_of_line),
 	.rendering_enabled (rendering_enabled),
 	.obj_size          (obj_size1),
-	.scanline          (scanline_nopr),
+	.scanline          (scanline_nopr[8:0]),
 	.cycle             (cycle),
 	.clear_signal      (clear_signal),
 	.oam_bus           (oam_bus),
@@ -1519,7 +1521,7 @@ SpriteAddressGen address_gen(
 	.in_range  (in_range & rendering_enabled),
 	.enabled   (sprite_load_en),  // Load sprites between 257..320
 	.obj_size  (obj_size1),
-	.scanline  (scanline_nopr),
+	.scanline  (scanline_nopr[8:0]),
 	.obj_patt  (obj_patt1),               // Object size and pattern table
 	.temp      (~is_rendering ? 8'hFF : oam_bus),                // Info from temp buffer.
 	.vram_addr (sprite_vram_addr),       // [out] VRAM Address that we want data from

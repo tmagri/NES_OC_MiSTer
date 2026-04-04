@@ -123,10 +123,11 @@ module NES(
 	output        bram_override,
 
 	output  [8:0] cycle,
-	output  [8:0] scanline,
+	output  [9:0] scanline,
 	input         int_audio,
 	input         ext_audio,
 	output        apu_ce,
+	output        ppu_ce_out,
 	input         gg,
 	input [128:0] gg_code,
 	output        gg_avail,
@@ -169,7 +170,8 @@ module NES(
 	output        SAVE_out_rnw,   // read = 1, write = 0
 	output        SAVE_out_ena,   // one cycle high for each action
 	output  [7:0] SAVE_out_be,
-	input         SAVE_out_done   // should be one cycle high when write is done or read value is valid
+	input         SAVE_out_done,   // should be one cycle high when write is done or read value is valid
+	input   [1:0] overclock        // 0=off, 1=mild 60fps, 2=full 60fps
 );
 
 
@@ -215,9 +217,37 @@ wire [7:0] cpu_dout;
 // master cycles and low for 6 master cycles. It is considered active when low or "even".
 reg odd_or_even = 1; // 1 == odd, 0 == even
 
-// Clock Dividers
-localparam div_cpu_n = 5'd12;
-localparam div_ppu_n = 3'd4;
+// -----------------------------------------------------------------------
+// Clock Dividers — hardware-mod-style proportional overclock
+//
+// The real NES hardware overclock mod lifts pin 29 on the CPU (2A03) AND
+// pin 18 on the PPU (2C02), then routes BOTH to a faster crystal oscillator.
+// Both chips share the same new clock so the 3:1 PPU:CPU ratio is ALWAYS
+// preserved. This is exactly what we replicate here:
+//   Off      : div_cpu=12, div_ppu=4  → 1.789 MHz CPU, ~60 fps (standard NTSC)
+//   Mild     : div_cpu=9,  div_ppu=3  → 2.386 MHz CPU, ~80 fps (+33%)
+//   Full     : div_cpu=6,  div_ppu=2  → 3.580 MHz CPU, ~120 fps (+100%)
+// Modes 1/2 (CPU Only 60fps) use PPU extra_lines to extend Vblank. By padding
+// the frame with extra scanlines, the output frame-rate drops back down to a
+// perfect 60fps. The game engine runs at normal 60hz speed, but the CPU has
+// +33% or +100% more cycles per frame, completely eliminating game slowdown.
+// All bus timing signals (cart_ce, cart_pre, phi2) scale with div_cpu_n.
+// -----------------------------------------------------------------------
+wire loader_done = (|mapper_flags);
+
+// Latch OC level at reset so dividers never change mid-frame.
+reg [4:0] div_cpu_n = 5'd12;
+reg [2:0] div_ppu_n = 3'd4;
+
+always @(posedge clk) begin
+    if (reset_nes) begin
+        case (loader_done ? overclock : 2'd0)
+            2'd1:    begin div_cpu_n <= 5'd9;  div_ppu_n <= 3'd3; end  // Mild ÷9/÷3
+            2'd2:    begin div_cpu_n <= 5'd6;  div_ppu_n <= 3'd2; end  // Full ÷6/÷2
+            default: begin div_cpu_n <= 5'd12; div_ppu_n <= 3'd4; end  // Off  ÷12/÷4
+        endcase
+    end
+end
 
 // Counters
 reg [4:0] div_cpu = 5'd1;
@@ -227,14 +257,30 @@ reg [1:0] div_sys = 2'd0;
 // CE's
 wire cpu_ce  = (div_cpu == div_cpu_n);
 wire ppu_ce  = (div_ppu == div_ppu_n);
-wire cart_ce = (div_cpu == div_cpu_n - 5'd2); // First PPU cycle where cpu data is visible.
+assign ppu_ce_out = ppu_ce;
+wire cart_ce = (div_cpu == div_cpu_n - 5'd2); // 2 master cycles before cpu_ce
 
-// Signals
-wire cart_pre  = (div_cpu >= div_cpu_n - 5'd6) && (div_cpu <= div_cpu_n - 5'd2);
+// Signals — all offsets relative to div_cpu_n so they scale with OC level
+wire cart_pre = (div_cpu >= div_cpu_n - 5'd6) && (div_cpu <= div_cpu_n - 5'd2);
 wire ppu_read  = (ppu_tick == 1);
 wire ppu_write = (ppu_tick == 1);
 
-wire phi2 = (div_cpu > 4 && div_cpu < div_cpu_n);
+// phi2 (M2 high phase): rises after address-setup time and falls at cpu_ce.
+// The setup time scales as div_cpu_n/3 so phi2 always overlaps with
+// ppu_tick==1 (ppu_write) at every valid OC level.
+wire phi2 = (div_cpu > (div_cpu_n / 3)) && (div_cpu < div_cpu_n);
+
+
+// -----------------------------------------------------------------------
+// CPU-Only Overclocking (Vblank Extension)
+// When using "CPU Only 60fps" modes, we must add scanlines to the PPU 
+// frame so that at the faster pixel clock, the frame still takes 1/60th 
+// of a second to render.
+// -----------------------------------------------------------------------
+wire [9:0] oc_extra_lines = 
+    (overclock == 2'd1) ? ((sys_type == 2'b00) ? 10'd87  : 10'd104) : // Mild 60fps (NTSC +87, PAL +104)
+    (overclock == 2'd2) ? ((sys_type == 2'b00) ? 10'd262 : 10'd312) : // Full 60fps (NTSC +262, PAL +312)
+    10'd0;
 
 // The infamous NES jitter is important for accuracy, but wreks havok on modern devices and scalers,
 // so what I do here is pause the whole system for one PPU clock and insert a "fake" ppu clock to
@@ -267,9 +313,14 @@ reg  [7:0] corepause_delay = 8'd0;
 reg  [2:0] div_ppu_pause = 0;
 wire skip_pixel_pause;
 wire ppu_ce_pause = corepause_active ? (div_ppu_pause == div_ppu_n) : ppu_ce;
+// Note: div_ppu_n is now a reg but is read as a wire here; safe since it
+// only changes synchronously during reset_nes and is stable afterward.
+
+
+
 wire render_ena;
 wire [8:0] cycle_paused;
-wire [8:0] scanline_paused;
+wire [9:0] scanline_paused;
 wire       is_in_vblank_paused;
 wire       evenframe;
 wire       evenframe_paused;
@@ -371,6 +422,7 @@ always @(posedge clk) begin
 
 end
 
+
 assign SS_TOP_BACK[0] = odd_or_even;
 
 ClockGen clockgen_pause(
@@ -379,6 +431,7 @@ ClockGen clockgen_pause(
 	.reset               (reset_noSS),
 	.sys_type            (sys_type),
 	.is_rendering        (render_ena),
+	.extra_lines         (oc_extra_lines),
 	.scanline            (scanline_paused),
 	.cycle               (cycle_paused),
 	.is_in_vblank        (is_in_vblank_paused),
@@ -498,6 +551,7 @@ APU apu(
 	.CS             (apu_cs),
 	.PAL            (sys_type == 2'b01),
 	.ce             (apu_ce),
+	.overclock      (overclock),
 	.reset          (reset),
 	.cold_reset     (cold_reset),
 	.ADDR           (addr[4:0]),
@@ -579,8 +633,8 @@ wire [13:0] chr_addr, chr_addr_ex;           // Address PPU accesses in VRAM
 wire [7:0] chr_from_ppu;        // Data from PPU to VRAM
 wire [7:0] chr_to_ppu;
 wire [8:0] ppu_cycle;
-wire [8:0] scanline_ppu;
-assign cycle = use_fake_h ? 9'd340 : (corepause_active) ? cycle_paused : ppu_cycle;
+wire [9:0] scanline_ppu;
+assign cycle    = use_fake_h ? 9'd340 : (corepause_active) ? cycle_paused : ppu_cycle;
 assign scanline = (corepause_active) ? scanline_paused : scanline_ppu;
 
 PPU ppu(
@@ -612,6 +666,7 @@ PPU ppu(
 	.short_frame      (skip_pixel),
 	.extra_sprites    (ex_sprites),
 	.mask             (mask),
+	.extra_lines      (oc_extra_lines),
 	.render_ena_out   (render_ena),
 	.evenframe        (evenframe),
 	.hblank           (hblank),
