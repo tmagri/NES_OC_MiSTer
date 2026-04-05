@@ -63,6 +63,7 @@ module cart_top (
 	input             fds_auto_eject, // FDS Auto Swap Enabled
 	input       [1:0] max_diskside,   // FDS disk side count
 	input             fds_fast,       // FDS disk access speed
+	input             mapper_ce,      // Standard ~1.78MHz CPU speed
 	// savestates              
 	input       [63:0]  SaveStateBus_Din,
 	input       [ 9:0]  SaveStateBus_Adr,
@@ -836,6 +837,7 @@ Mapper67 map67(
 	.vram_ce_b  (vram_ce_b),
 	.irq_b      (irq_b),
 	.flags_out_b(flags_out_b),
+	.mapper_ce  (mapper_ce),
 	.audio_in   (audio_in),
 	.audio_b    (audio_out_b),
 	// savestates
@@ -912,6 +914,7 @@ Mapper69 map69(
 	.vram_ce_b  (vram_ce_b),
 	.irq_b      (irq_b),
 	.flags_out_b(flags_out_b),
+	.mapper_ce  (mapper_ce),
 	.audio_in   (ss5b_audio),
 	.audio_b    (audio_out_b),
 	// savestates
@@ -1545,6 +1548,7 @@ VRC1 vrc1(
 	.vram_ce_b  (vram_ce_b),
 	.irq_b      (irq_b),
 	.flags_out_b(flags_out_b),
+	.mapper_ce  (mapper_ce),
 	.audio_in   (audio_in),
 	.audio_b    (audio_out_b),
 	// savestates
@@ -1583,6 +1587,7 @@ VRC3 vrc3(
 	.vram_ce_b  (vram_ce_b),
 	.irq_b      (irq_b),
 	.flags_out_b(flags_out_b),
+	.mapper_ce  (mapper_ce),
 	.audio_in   (audio_in),
 	.audio_b    (audio_out_b),
 	// savestates
@@ -1621,6 +1626,7 @@ VRC24 vrc24(
 	.vram_ce_b  (vram_ce_b),
 	.irq_b      (irq_b),
 	.flags_out_b(flags_out_b),
+	.mapper_ce  (mapper_ce),
 	.audio_in   (audio_in),
 	.audio_b    (audio_out_b),
 	// savestates
@@ -1709,6 +1715,7 @@ VRC6 vrc6(
 	.vram_ce_b  (vram_ce_b),
 	.irq_b      (irq_b),
 	.flags_out_b(flags_out_b),
+	.mapper_ce  (mapper_ce),
 	.audio_in   (vrc6_audio),
 	.audio_b    (audio_out_b),
 	// savestates
@@ -1747,6 +1754,7 @@ VRC7 vrc7(
 	.vram_ce_b  (vram_ce_b),
 	.irq_b      (irq_b),
 	.flags_out_b(flags_out_b),
+	.mapper_ce  (mapper_ce),
 	.audio_in   (vrc7_audio),
 	.audio_b    (audio_out_b)
 );
@@ -1778,6 +1786,7 @@ N163 n163(
 	.vram_ce_b  (vram_ce_b),
 	.irq_b      (irq_b),
 	.flags_out_b(flags_out_b),
+	.mapper_ce  (mapper_ce),
 	.audio_in   (n163_audio),
 	.audio_b    (audio_out_b),
 	// Special ports

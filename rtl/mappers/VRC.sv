@@ -4,6 +4,7 @@
 module VRC1(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
+	input        mapper_ce,   // Native un-overclocked M2
 	input        enable,      // Mapper enabled
 	input [31:0] flags,       // Cart flags
 	input [15:0] prg_ain,     // prg address
@@ -131,6 +132,7 @@ endmodule
 module VRC3(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
+	input        mapper_ce,   // Native un-overclocked M2
 	input        enable,      // Mapper enabled
 	input [31:0] flags,       // Cart flags
 	input [15:0] prg_ain,     // prg address
@@ -197,21 +199,31 @@ end else if (SaveStateBus_load) begin
 	irq_latch  <= SS_MAP1[23: 8];
 	irq_counter<= SS_MAP1[39:24];
 	irq        <= SS_MAP1[   40];
-end else if (ce) begin
-	irq_enable[3] <= 1'b0;
-	if (prg_ain[15] & prg_write) begin
-		case (prg_ain[14:12])
-			3'b000:  irq_latch[3:0]   <= prg_din[3:0];
-			3'b001:  irq_latch[7:4]   <= prg_din[3:0];
-			3'b010:  irq_latch[11:8]  <= prg_din[3:0];
-			3'b011:  irq_latch[15:12] <= prg_din[3:0];
-			3'b100:  irq_enable[4:0]  <= {2'b11, prg_din[2:0]};
-			3'b101:  irq_enable[4:3]  <= 2'b01;
-			3'b111:  prg_bank         <= prg_din[2:0];  // PRG bank 0x8000-0xBFFF
-		endcase
+end else begin
+	if (ce) begin
+		irq_enable[3] <= 1'b0;
+		if (prg_ain[15] & prg_write) begin
+			case (prg_ain[14:12])
+				3'b000:  irq_latch[3:0]   <= prg_din[3:0];
+				3'b001:  irq_latch[7:4]   <= prg_din[3:0];
+				3'b010:  irq_latch[11:8]  <= prg_din[3:0];
+				3'b011:  irq_latch[15:12] <= prg_din[3:0];
+				3'b100:  irq_enable[4:0]  <= {2'b11, prg_din[2:0]};
+				3'b101:  irq_enable[4:3]  <= 2'b01;
+				3'b111:  prg_bank         <= prg_din[2:0];  // PRG bank 0x8000-0xBFFF
+			endcase
+		end
+
+		if (irq_enable[3]) begin
+			irq <= 1'b0;	// IRQ ACK
+			if (irq_enable[4])
+				irq_counter <= irq_latch;
+			else
+				irq_enable[1] <= irq_enable[0];
+		end
 	end
 
-	if (irq_enable[1]) begin
+	if (mapper_ce & irq_enable[1]) begin
 		irq_counter[7:0] <= irq_counter[7:0] + 8'd1;
 		if (irq_counter[7:0] == 8'hFF) begin
 			if (irq_enable[2]) begin
@@ -223,14 +235,6 @@ end else if (ce) begin
 				end
 			end
 		end
-	end
-
-	if (irq_enable[3]) begin
-		irq <= 1'b0;	// IRQ ACK
-		if (irq_enable[4])
-			irq_counter <= irq_latch;
-		else
-			irq_enable[1] <= irq_enable[0];
 	end
 end
 
@@ -263,6 +267,7 @@ endmodule
 module VRC24(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
+	input        mapper_ce,   // Native un-overclocked M2
 	input        enable,      // Mapper enabled
 	input [31:0] flags,       // Cart flags
 	input [15:0] prg_ain,     // prg address
@@ -447,7 +452,7 @@ wire irqout;
 assign irq = irqout & mapperVRC4;
 vrcIRQ vrc4irq
 (
-	clk,1'b0,enable,prg_write,{irqlh,irqll},irqc,irqa,prg_din,irqout,ce,
+	clk,1'b0,enable,prg_write,{irqlh,irqll},irqc,irqa,prg_din,irqout,ce, mapper_ce,
 	// savestates
 	SaveStateBus_Din, 
 	SaveStateBus_Adr,
@@ -474,6 +479,7 @@ endmodule
 module VRC6(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
+	input        mapper_ce,   // Native un-overclocked M2
 	input        enable,      // Mapper enabled
 	input [31:0] flags,       // Cart flags
 	input [15:0] prg_ain,     // prg address
@@ -577,6 +583,7 @@ endmodule
 module VRC7(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
+	input        mapper_ce,   // Native un-overclocked M2
 	input        enable,      // Mapper enabled
 	input [31:0] flags,       // Cart flags
 	input [15:0] prg_ain,     // prg address
@@ -692,7 +699,7 @@ wire irql = {prg_ain[15:12],prg_ain43}==5'b11101; // 0xE008 or 0xE010
 wire irqc = {prg_ain[15:12],prg_ain43}==5'b11110; // 0xF000
 wire irqa = {prg_ain[15:12],prg_ain43}==5'b11111; // 0xF008 or 0xF010
 
-vrcIRQ vrc7irq(clk,1'b0,enable,prg_write,{irql,irql},irqc,irqa,prg_din,irq,ce);
+vrcIRQ vrc7irq(clk,1'b0,enable,prg_write,{irql,irql},irqc,irqa,prg_din,irq,ce,mapper_ce);
 
 endmodule
 
@@ -739,6 +746,7 @@ module MAPVRC6(     //signal descriptions in powerpak.v
 	input cfg_chrram,
 
 	input ce,// add
+	input mapper_ce,
 	//output [15:0] audio,
 	input mapper26,
 	// savestates              
@@ -900,6 +908,7 @@ module vrcIRQ(
 	input [7:0] nesprgdin,
 	output irq,
 	input ce,
+	input mapper_ce,
 	// savestates              
 	input       [63:0]  SaveStateBus_Din,
 	input       [ 9:0]  SaveStateBus_Adr,
@@ -951,12 +960,12 @@ always@(posedge clk20) begin
 		scalar <= SS_MAP1[24:18];
 		line   <= SS_MAP1[26:25];
 		irqcnt <= SS_MAP1[44:37];
-	end else if(setE) begin
+	end else if(setE && ce) begin
 		scalar<=113;
 		line<=0;
 		irqcnt<=irqlatch;
 		irqcntL<=irqlatchL;
-	end else if(ce && irqE) begin
+	end else if(mapper_ce && irqE) begin
 		if(scalar!=0)
 			scalar<=scalar-1'd1;
 		else begin
@@ -982,16 +991,18 @@ always@(posedge clk20) begin
 	end else if (SaveStateBus_load) begin
 		irqE    <= SS_MAP1[   27];
 		timeout <= SS_MAP1[   28];
-	end else if (ce) begin
-		if(nesprg_we & (irqctrl_add | irqack_add)) //write Fxx1 or Fxx2
+	end else begin
+		if(ce & nesprg_we & (irqctrl_add | irqack_add)) //write Fxx1 or Fxx2
 			timeout<=0;
-		else if(irqclk & irqcnt==255 && (!vrc5 | irqcntL==255))
+		else if(mapper_ce & irqclk & irqcnt==255 && (!vrc5 | irqcntL==255))
 			timeout<=1;
 
-		if(nesprg_we & irqctrl_add) //write Fxx1
-			irqE<=nesprgdin[1];
-		else if(nesprg_we & irqack_add) //write Fxx2
-			irqE<=irqA;
+		if(ce) begin
+			if(nesprg_we & irqctrl_add) //write Fxx1
+				irqE<=nesprgdin[1];
+			else if(nesprg_we & irqack_add) //write Fxx2
+				irqE<=irqA;
+		end
 	end
 end
 
@@ -1290,6 +1301,7 @@ endmodule
 module VRC5(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
+	input        mapper_ce,   // Native un-overclocked M2
 	input        enable,      // Mapper enabled
 	input [31:0] flags,       // Cart flags
 	input [15:0] prg_ain,     // prg address
@@ -1523,7 +1535,7 @@ wire irqout;
 assign irq = irqout;
 vrcIRQ vrc5irq
 (
-	clk,1'b1,enable,prg_write,{irqlh|irqll,irqlh},irqc,irqa,prg_din,irqout,ce,
+	clk,1'b1,enable,prg_write,{irqlh|irqll,irqlh},irqc,irqa,prg_din,irqout,ce,mapper_ce,
 	// savestates
 	SaveStateBus_Din, 
 	SaveStateBus_Adr,

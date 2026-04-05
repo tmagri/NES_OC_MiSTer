@@ -251,6 +251,9 @@ end
 
 // Counters
 reg [4:0] div_cpu = 5'd1;
+reg [4:0] div_native_cpu = 5'd1;
+wire native_ce = (div_native_cpu == 5'd12);
+wire mapper_ce = (div_native_cpu == 5'd10);
 reg [2:0] div_ppu = 3'd1;
 reg [1:0] div_sys = 2'd0;
 
@@ -262,8 +265,15 @@ wire cart_ce = (div_cpu == div_cpu_n - 5'd2); // 2 master cycles before cpu_ce
 
 // Signals — all offsets relative to div_cpu_n so they scale with OC level
 wire cart_pre = (div_cpu >= div_cpu_n - 5'd6) && (div_cpu <= div_cpu_n - 5'd2);
-wire ppu_read  = (ppu_tick == 1);
-wire ppu_write = (ppu_tick == 1);
+
+reg ppu_action_done;
+always @(posedge clk) begin
+	if (cpu_ce) ppu_action_done <= 0;
+	else if (ppu_ce) ppu_action_done <= 1;
+end
+
+wire ppu_read  = (overclock == 2'd2) ? ~ppu_action_done : (ppu_tick == 1);
+wire ppu_write = (overclock == 2'd2) ? ~ppu_action_done : (ppu_tick == 1);
 
 // phi2 (M2 high phase): rises after address-setup time and falls at cpu_ce.
 // The setup time scales as div_cpu_n/3 so phi2 always overlaps with
@@ -332,8 +342,10 @@ always @(posedge clk) begin
 	if (reset_nes) hold_reset <= 1;
 	if (cpu_ce) hold_reset <= 0;
 	if (~freeze_clocks | ~(div_ppu == (div_ppu_n - 1'b1))) begin
-		if (~skip_ppu_cycle)
+		if (~skip_ppu_cycle) begin
 			div_cpu <= cpu_ce || (ppu_ce && div_cpu > div_cpu_n) ? 5'd1 : div_cpu + 5'd1;
+			div_native_cpu <= native_ce || (ppu_ce && div_native_cpu > 5'd12) ? 5'd1 : div_native_cpu + 5'd1;
+		end
 
 		div_ppu <= ppu_ce ? 3'd1 : div_ppu + 3'd1;
 
@@ -378,6 +390,7 @@ always @(posedge clk) begin
 	last_sys_type <= sys_type;
 	if (last_sys_type != sys_type) begin
 		div_cpu <= 5'd1;
+		div_native_cpu <= 5'd1;
 		div_ppu <= 3'd1;
 		div_sys <= 0;
 		cpu_tick_count <= 0;
@@ -392,6 +405,7 @@ always @(posedge clk) begin
 	end else begin
 		if (corepause_active || (pausecore && div_cpu == 5'd1 && div_ppu == 3'd1 && div_sys == 0 && cpu_tick_count == 0 && ~freeze_clocks && is_in_vblank_paused && ~pause_cpu && cpu_Instrnew)) begin
 			div_cpu           <= 5'd1;
+			div_native_cpu    <= 5'd1;
 			div_ppu           <= 3'd1;
 			div_sys           <= 0;
 			cpu_tick_count    <= 0;
@@ -639,7 +653,7 @@ assign scanline = (corepause_active) ? scanline_paused : scanline_ppu;
 
 PPU ppu(
 	.clk              (clk),
-	.cs               (addr[15:13] == 3'b001 && phi2),
+	.cs               (addr[15:13] == 3'b001 && ((overclock == 2'd2) ? ~ppu_action_done : phi2)),
 	.RWn              (mr_int && !mw_int),
 	.rst_behavior     (ppu_rst_behavior),
 	.ce               (ppu_ce),
@@ -737,6 +751,7 @@ cart_top multi_mapper (
 	.irq               (mapper_irq),              // IRQ (inverted, active high)
 	.audio_in          (audio_mappers),           // Amplified and inverted APU audio
 	.audio             (sample_ext),              // Mixed audio output from cart
+	.mapper_ce         (mapper_ce),               // Always runs at unoverclocked 1.78MHz
 	// SDRAM Communication
 	.prg_aout          (prg_linaddr),             // SDRAM adjusted PRG RAM address
 	.prg_allow         (prg_allow),               // Simulates internal CE/Locking

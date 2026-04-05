@@ -969,8 +969,9 @@ module APU #(parameter [9:0] SSREG_INDEX_TOP, parameter [9:0] SSREG_INDEX_DMC1, 
 	assign aclk1_delayed = ce & ~get_or_put & pitch_ce;
 	assign phi1          = ce & pitch_ce;
 
-	assign get_ce = aclk1;
-	assign put_ce = aclk1_delayed;
+	// DMA requires full speed CPU ticks to prevent double-writing to $2004 OAM
+	assign get_ce = ce & get_or_put;
+	assign put_ce = ce & ~get_or_put;
 
 	logic [4:0] Enabled;
 	logic [3:0] Sq1Sample,Sq2Sample,TriSample,NoiSample;

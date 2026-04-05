@@ -2,6 +2,7 @@
 module Mapper69(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
+	input        mapper_ce,   // Native un-overclocked M2
 	input        enable,      // Mapper enabled
 	input [31:0] flags,       // Cart flags
 	input [15:0] prg_ain,     // prg address
@@ -102,12 +103,15 @@ end else if (SaveStateBus_load) begin
 	ram_enable    <= SS_MAP2[   44];
 	ram_select    <= SS_MAP2[   45];
 	irq           <= SS_MAP2[   46];
-end else if (ce) begin
-	irq_counter <= new_irq_counter[15:0];
-	if (irq_trigger && new_irq_counter[16]) irq <= 1;
-	if (!irq_trigger) irq <= 0;
+end else begin
+	if (mapper_ce) begin
+		irq_counter <= new_irq_counter[15:0];
+		if (irq_trigger && new_irq_counter[16]) irq <= 1;
+		if (!irq_trigger) irq <= 0;
+	end
 
-	if (prg_ain[15] & prg_write) begin
+	if (ce) begin
+		if (prg_ain[15] & prg_write) begin
 		case (prg_ain[14:13])
 			0: addr <= prg_din[3:0];
 			1: begin
@@ -123,6 +127,7 @@ end else if (ce) begin
 				if (addr == 8) {ram_enable, ram_select} <= prg_din[7:6];
 			end
 		endcase
+		end
 	end
 end
 
@@ -487,6 +492,7 @@ endmodule
 module Mapper67 (
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
+	input        mapper_ce,   // Native un-overclocked M2
 	input        enable,      // Mapper enabled
 	input [31:0] flags,       // Cart flags
 	input [15:0] prg_ain,     // prg address
@@ -566,40 +572,45 @@ end else if (SaveStateBus_load) begin
 	irq_enable <= SS_MAP1[   59];
 	irq_low    <= SS_MAP1[   60];
 	irq        <= SS_MAP1[   61];
-end else if (ce) begin
-	irq_ack <= 1'b0;
-	if ((prg_write) && (prg_ain[15])) begin// Cover all from $8000 to $FFFF to maximize compatibility
-		if (!mapper190)
-			casez({prg_ain[14:11],irq_low})
-				5'b000_1_?: chr_bank_0 <= prg_din;
-				5'b001_1_?: chr_bank_1 <= prg_din;
-				5'b010_1_?: chr_bank_2 <= prg_din;
-				5'b011_1_?: chr_bank_3 <= prg_din;
-				5'b110_1_?: mirroring <= prg_din[1:0];
-				5'b111_1_?: prg_bank_0 <= prg_din;
-				5'b100_1_0: {irq_low, irq_counter[15:8]} <= {1'b1,prg_din};
-				5'b100_1_1: {irq_low, irq_counter[7:0]} <= {1'b0,prg_din};
-				5'b101_1_?: {irq_low, irq_ack, irq_enable} <= {2'b01, prg_din[4]};
-			endcase
-		else
-			casez({prg_ain[13],prg_ain[1:0]})
-				3'b0_??: prg_bank_0[3:0] <= {prg_ain[14],prg_din[2:0]};
-				3'b1_00: chr_bank_0 <= prg_din;
-				3'b1_01: chr_bank_1 <= prg_din;
-				3'b1_10: chr_bank_2 <= prg_din;
-				3'b1_11: chr_bank_3 <= prg_din;
-			endcase
-	end
-	if (irq_enable) begin
-		irq_counter <= irq_counter - 16'd1;
-		if (irq_counter == 16'h0) begin
-			irq <= 1'b1; // IRQ
-			irq_enable <= 0;
+end else begin
+	if (mapper_ce) begin
+		if (irq_enable) begin
+			irq_counter <= irq_counter - 16'd1;
+			if (irq_counter == 16'h0) begin
+				irq <= 1'b1; // IRQ
+				irq_enable <= 0;
+			end
 		end
 	end
 
-	if (irq_ack)
-		irq <= 1'b0; // IRQ ACK
+	if (ce) begin
+		irq_ack <= 1'b0;
+		if ((prg_write) && (prg_ain[15])) begin// Cover all from $8000 to $FFFF to maximize compatibility
+			if (!mapper190)
+				casez({prg_ain[14:11],irq_low})
+					5'b000_1_?: chr_bank_0 <= prg_din;
+					5'b001_1_?: chr_bank_1 <= prg_din;
+					5'b010_1_?: chr_bank_2 <= prg_din;
+					5'b011_1_?: chr_bank_3 <= prg_din;
+					5'b110_1_?: mirroring <= prg_din[1:0];
+					5'b111_1_?: prg_bank_0 <= prg_din;
+					5'b100_1_0: {irq_low, irq_counter[15:8]} <= {1'b1,prg_din};
+					5'b100_1_1: {irq_low, irq_counter[7:0]} <= {1'b0,prg_din};
+					5'b101_1_?: {irq_low, irq_ack, irq_enable} <= {2'b01, prg_din[4]};
+				endcase
+			else
+				casez({prg_ain[13],prg_ain[1:0]})
+					3'b0_??: prg_bank_0[3:0] <= {prg_ain[14],prg_din[2:0]};
+					3'b1_00: chr_bank_0 <= prg_din;
+					3'b1_01: chr_bank_1 <= prg_din;
+					3'b1_10: chr_bank_2 <= prg_din;
+					3'b1_11: chr_bank_3 <= prg_din;
+				endcase
+		end
+
+		if (irq_ack)
+			irq <= 1'b0; // IRQ ACK
+	end
 end
 
 assign SS_MAP1_BACK[ 7: 0] = prg_bank_0;

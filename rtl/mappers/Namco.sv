@@ -3,6 +3,7 @@
 module N163(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
+	input        mapper_ce,   // Native un-overclocked M2
 	input        enable,      // Mapper enabled
 	input [63:0] flags,       // Cart flags
 	input [15:0] prg_ain,     // prg address
@@ -93,7 +94,7 @@ MAPN163 n163
 	neschrdout, neschr_oe, chr_allow, chrram_oe, wram_oe, wram_we, prgram_we,
 	prgram_oe, chr_aoutm, ramprgaout, irq, vram_ce, exp6,
 	0, 7'b1111111, 6'b111111, flags[14], flags[16], flags[15],
-	ce, (flags[7:0]==210), flags[24:21], audio_dout,
+	ce, mapper_ce, (flags[7:0]==210), flags[24:21], audio_dout,
 	// savestates
 	SaveStateBus_Din, 
 	SaveStateBus_Adr,
@@ -161,6 +162,7 @@ module MAPN163(     //signal descriptions in powerpak.v
 	input cfg_chrram,
 
 	input ce,// add
+	input mapper_ce,
 	input mapper210,
 	input [3:0] submapper,
 	//output [15:0] snd_level,
@@ -234,22 +236,27 @@ always@(posedge clk20) begin
 if (SaveStateBus_load) begin
 	count   <= SS_MAP3[23: 8];
 	timeout <= SS_MAP3[   24];
-end else if (ce) begin
-	if(prgain[15:12]==4'b0101)
-		timeout<=0;
-	else if(count==16'hFFFF)
-		timeout<=1;
+end else begin
+	if (mapper_ce) begin
+		if(count==16'hFFFF)
+			timeout<=1;
 
-	if(nesprg_we & prgain[15:11]==5'b01010)
-		count[7:0]<=nesprgdin;
-	else if(countup)
-		count[7:0]<=count_next[7:0];
-
-	if(nesprg_we & prgain[15:11]==5'b01011)
-		count[15:8]<=nesprgdin;
-	else if(countup)
-		count[15:8]<=count_next[15:8];
+		if(countup) begin
+			count <= count_next;
+		end
 	end
+
+	if (ce) begin
+		if(prgain[15:12]==4'b0101)
+			timeout<=0;
+
+		if(nesprg_we & prgain[15:11]==5'b01010)
+			count[7:0]<=nesprgdin;
+
+		if(nesprg_we & prgain[15:11]==5'b01011)
+			count[15:8]<=nesprgdin;
+	end
+end
 end
 
 assign SS_MAP1_BACK[ 7: 0] = chr0;
