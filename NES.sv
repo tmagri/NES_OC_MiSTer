@@ -239,7 +239,7 @@ parameter CONF_STR = {
 	"d7rA,Save state(Alt+F1-F4);",
 	"d7rB,Restore state(F1-F4);",
 	"-;",
-	"O[72:71],CPU Overclock,Off,Turbo (1.33x),Extreme (2.0x);",
+	"O[72:71],CPU Overclock,Off,Turbo (1.33x),Medium (1.50x),Extreme (2.00x);",
 	"-;",
 	"P1,Audio & Video;",
 	"P1-;",

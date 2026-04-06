@@ -20,6 +20,7 @@ module VramAddressGen (
 	input is_pre_render, // Is this the pre-render scanline
 	input trigger_2007,
 	input [8:0] cycle,
+	input [9:0] extra_lines, // OC: Passed to calculate deferred anti-jitter scroll writes
 	output [14:0] vram,
 	output [2:0] fine_x_scroll,  // Current vram value
 	// savestates
@@ -54,7 +55,21 @@ assign SS_vram_BACK[   34] = ppu_address_latch;
 assign SS_vram_BACK[52:51] = write_shift;
 assign SS_vram_BACK[63:55] = 9'b0; // free to be used
 
-wire write_2006b = write_shift[1];
+// Anti-Jitter: If the CPU is overclocked, it will finish its cycle-counted HBlank wait loops too early, 
+// writing to $2006 mid-scanline and causing tearing. We trap early writes here and defer their application 
+// exactly to the edge of the screen (cycle 256).
+reg pending_2006b;
+always @(posedge clk) begin
+	if (reset) pending_2006b <= 1'b0;
+	else if (ce) begin
+		if (write_shift[1] && cycle < 256 && is_rendering && extra_lines != 0)
+			pending_2006b <= 1'b1;
+		else if (cycle == 256)
+			pending_2006b <= 1'b0;
+	end
+end
+
+wire write_2006b = (write_shift[1] && (cycle >= 256 || !is_rendering || extra_lines == 0)) || (pending_2006b && cycle == 256);
 
 wire inc_horizontal = (cycle[2:0] == 7 && ((cycle <= 255) || (cycle >= 320 && cycle <= 335)) && is_rendering);
 wire inc_vertical = (cycle == 255) && is_rendering;
@@ -1365,6 +1380,11 @@ wire is_vbe_sl;
 
 wire clear_signal = is_pre_render_line;
 
+// Overclocking can cause the CPU to poll Sprite 0 before VBlank even ends.
+// Clearing the flag at the start of the post-render line (240) ensures
+// the CPU sees '0' and correctly waits for the next frame's Sprite 0 hit.
+wire clear_flags = clear_signal || (scanline == 240 && cycle == 0 && |extra_lines);
+
 wire [13:0] vram_a;
 reg [7:0] vram_a_byte;
 
@@ -1416,6 +1436,7 @@ VramAddressGen vram0(
 	.is_pre_render (is_pre_render_line),
 	.trigger_2007  (vram_w_ppudata_d || vram_r_ppudata_d),
 	.cycle         (cycle),
+	.extra_lines   (extra_lines),
 	.vram          (vram),
 	.fine_x_scroll (fine_x_scroll),
 	 // savestates
@@ -1462,8 +1483,6 @@ wire [3:0] bg_pixel = {bg_pixel_noblank[3:2], show_bg_on_pixel ? bg_pixel_noblan
 wire [31:0] oam_bus_ex;
 wire masked_sprites;
 
-wire [9:0] scanline_nopr = is_pre_render_line ? (~|sys_type ? 10'd261 : 10'd311) : scanline;
-
 OAMEval spriteeval (
 	.clk               (clk),
 	.ce                (ce),
@@ -1471,9 +1490,9 @@ OAMEval spriteeval (
 	.end_of_line       (end_of_line),
 	.rendering_enabled (rendering_enabled),
 	.obj_size          (obj_size1),
-	.scanline          (scanline_nopr[8:0]),
+	.scanline          (scanline[8:0]),
 	.cycle             (cycle),
-	.clear_signal      (clear_signal),
+	.clear_signal      (clear_flags),
 	.oam_bus           (oam_bus),
 	.oam_bus_ex        (oam_bus_ex),
 	.oam_addr_write    (write && (ain == 3)),
@@ -1521,7 +1540,7 @@ SpriteAddressGen address_gen(
 	.in_range  (in_range & rendering_enabled),
 	.enabled   (sprite_load_en),  // Load sprites between 257..320
 	.obj_size  (obj_size1),
-	.scanline  (scanline_nopr[8:0]),
+	.scanline  (scanline[8:0]),
 	.obj_patt  (obj_patt1),               // Object size and pattern table
 	.temp      (~is_rendering ? 8'hFF : oam_bus),                // Info from temp buffer.
 	.vram_addr (sprite_vram_addr),       // [out] VRAM Address that we want data from
@@ -1541,7 +1560,7 @@ SpriteAddressGenEx address_gen_ex(
 	.rendering      (rendering_enabled),
 	.enabled        (sprite_load_en),  // Load sprites between 256..319
 	.obj_size       (obj_size1),
-	.scanline       (scanline_nopr[7:0]),
+	.scanline       (scanline[7:0]),
 	.obj_patt       (obj_patt1),               // Object size and pattern table
 	.temp           (~is_rendering ? 32'hFFFFFFFF : oam_bus_ex),                // Info from temp buffer.
 	.vram_addr      (sprite_vram_addr_ex),    // [out] VRAM Address that we want data from
@@ -1599,7 +1618,7 @@ always @(posedge clk) begin
 			sprite_sr <= {3'b000, rendering_regs};
 		if (cycle == 256)
 			sprite_sr <= {4'b0000};
-		if (clear_signal) begin
+		if (clear_flags) begin
 			sprite0_hit_bg <= 0;
 		end else if (spr0_hit) begin
 			sprite0_hit_bg <= 1;
@@ -1805,7 +1824,7 @@ wire set_nmi = entering_vblank & ~clear_nmi;
 wire [7:0] ppu_dbus =
 	write ? din :
 	read ? (
-		(ain == 2) ? {nmi_occured, (spr0_hit || sprite0_hit_bg) & ~clear_signal, sprite_overflow & ~clear_signal, latched_dout[4:0]} : // PPUSTATUS
+		(ain == 2) ? {nmi_occured, (spr0_hit || sprite0_hit_bg) & ~clear_flags, sprite_overflow & ~clear_flags, latched_dout[4:0]} : // PPUSTATUS
 		(ain == 4) ? oam_bus : // OAMDATA
 		(ain == 7) ? (is_pal_address ? {latched_dout[7:6], (grayscale ? {color1[5:4], 4'b0000} : color1)} : vram_latch) : // PPUDATA
 		latched_dout) :

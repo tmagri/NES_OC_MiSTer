@@ -235,29 +235,27 @@ reg odd_or_even = 1; // 1 == odd, 0 == even
 // -----------------------------------------------------------------------
 wire loader_done = (|mapper_flags);
 
-// 1. Identify "Extreme-Safe" Mappers (FDS, NROM, UxROM, CNROM, AxROM)
-wire is_extreme_safe = (mapper_flags[7:0] == 8'h14) || // FDS
-                       (mapper_flags[7:0] == 8'h00) || // NROM (SMB1)
-                       (mapper_flags[7:0] == 8'h02) || // UxROM
-                       (mapper_flags[7:0] == 8'h03) || // CNROM
-                       (mapper_flags[7:0] == 8'h07);   // AxROM
-
-// 2. Cap overclock to 33% (Turbo) if the mapper is NOT extreme-safe
-wire [1:0] effective_overclock = (overclock == 2'd2 && !is_extreme_safe) ? 2'd1 : overclock;
-
 // Latch OC level at reset so dividers never change mid-frame.
 reg [4:0] div_cpu_n = 5'd12;
-reg [2:0] div_ppu_n = 3'd4;
+reg [2:0] div_ppu_n_base = 3'd4;
+reg is_medium_oc = 1'b0;
 
 always @(posedge clk) begin
-    if (reset_nes) begin
-        case (loader_done ? effective_overclock : 2'd0)
-            2'd1:    begin div_cpu_n <= 5'd9;  div_ppu_n <= 3'd3; end  // Turbo ÷9/÷3
-            2'd2:    begin div_cpu_n <= 5'd6;  div_ppu_n <= 3'd2; end  // Extreme ÷6/÷2
-            default: begin div_cpu_n <= 5'd12; div_ppu_n <= 3'd4; end  // Off  ÷12/÷4
-        endcase
-    end
+	if (reset_nes) begin
+		is_medium_oc <= (loader_done && overclock == 2'd2);
+		case (loader_done ? overclock : 2'd0)
+			2'd1:    begin div_cpu_n <= 5'd9;  div_ppu_n_base <= 3'd3; end  // Turbo   1.33x (÷9/÷3)
+			2'd2:    begin div_cpu_n <= 5'd8;  div_ppu_n_base <= 3'd3; end  // Medium  1.50x (dynamic 3-3-2)
+			2'd3:    begin div_cpu_n <= 5'd6;  div_ppu_n_base <= 3'd2; end  // Extreme 2.00x (÷6/÷2)
+			default: begin div_cpu_n <= 5'd12; div_ppu_n_base <= 3'd4; end  // Off     1.00x (÷12/÷4)
+		endcase
+	end
 end
+
+// Dynamic PPU divider: For Medium (1.50x), CPU div is 8. To maintain the crucial 3:1 PPU:CPU 
+// ratio, the PPU divider must average 2.66. We safely achieve this perfectly by alternating 
+// the PPU divider: 3, 3, 2 (8 master clocks = exactly 3 PPU ticks).
+wire [2:0] div_ppu_n = (is_medium_oc && ppu_tick == 2) ? 3'd2 : div_ppu_n_base;
 
 // Counters
 reg [4:0] div_cpu = 5'd1;
@@ -271,19 +269,13 @@ reg [1:0] div_sys = 2'd0;
 wire cpu_ce  = (div_cpu == div_cpu_n);
 wire ppu_ce  = (div_ppu == div_ppu_n);
 assign ppu_ce_out = ppu_ce;
-wire cart_ce = (div_cpu == (effective_overclock == 2'd2 ? div_cpu_n - 5'd1 : div_cpu_n - 5'd2)); // 1 master cycle before cpu_ce on Extreme, 2 normally
+wire cart_ce = (div_cpu == (overclock[1] ? div_cpu_n - 5'd1 : div_cpu_n - 5'd2)); // Late trigger for Medium/Extreme (Mode 2/3)
 
 // Signals — all offsets relative to div_cpu_n so they scale with OC level
-wire cart_pre = (div_cpu >= div_cpu_n - 5'd6) && (div_cpu <= (effective_overclock == 2'd2 ? div_cpu_n - 5'd1 : div_cpu_n - 5'd2));
+wire cart_pre = (div_cpu >= div_cpu_n - 5'd6) && (div_cpu <= (overclock[1] ? div_cpu_n - 5'd1 : div_cpu_n - 5'd2));
 
-reg ppu_action_done;
-always @(posedge clk) begin
-	if (cpu_ce) ppu_action_done <= 0;
-	else if (ppu_ce) ppu_action_done <= 1;
-end
-
-wire ppu_read  = (effective_overclock == 2'd2) ? ~ppu_action_done : (ppu_tick == 1);
-wire ppu_write = (effective_overclock == 2'd2) ? ~ppu_action_done : (ppu_tick == 1);
+wire ppu_read  = (ppu_tick == 1);
+wire ppu_write = (ppu_tick == 1);
 
 // phi2 (M2 high phase): rises after address-setup time and falls at cpu_ce.
 // The setup time scales as div_cpu_n/3 so phi2 always overlaps with
@@ -298,9 +290,10 @@ wire phi2 = (div_cpu > (div_cpu_n / 3)) && (div_cpu < div_cpu_n);
 // of a second to render.
 // -----------------------------------------------------------------------
 wire [9:0] oc_extra_lines = 
-    (effective_overclock == 2'd1) ? ((sys_type == 2'b00) ? 10'd87  : 10'd104) : // Turbo 60fps (NTSC +87, PAL +104)
-    (effective_overclock == 2'd2) ? ((sys_type == 2'b00) ? 10'd262 : 10'd312) : // Extreme 60fps (NTSC +262, PAL +312)
-    10'd0;
+	(overclock == 2'd1) ? ((sys_type == 2'b00) ? 10'd87  : 10'd104) : // Turbo   (1.33x PPU clock extension)
+	(overclock == 2'd2) ? ((sys_type == 2'b00) ? 10'd131 : 10'd156) : // Medium  (1.50x PPU clock extension)
+	(overclock == 2'd3) ? ((sys_type == 2'b00) ? 10'd262 : 10'd312) : // Extreme (2.00x PPU clock extension)
+	10'd0;
 
 // The infamous NES jitter is important for accuracy, but wreks havok on modern devices and scalers,
 // so what I do here is pause the whole system for one PPU clock and insert a "fake" ppu clock to
@@ -382,7 +375,7 @@ always @(posedge clk) begin
 
 	if ((((skip_pixel && ~corepause_active) || (skip_pixel_pause && corepause_active)) && (faux_pixel_cnt == 0)) && !dejitter_timing) begin
 		freeze_clocks <= 1'b1;
-		faux_pixel_cnt <= {div_ppu_n - 1'b1, 1'b0} + 1'b1;
+		faux_pixel_cnt <= {div_ppu_n_base - 1'b1, 1'b0} + 1'b1;
 	end
 
 
@@ -575,7 +568,7 @@ APU apu(
 	.CS             (apu_cs),
 	.PAL            (sys_type == 2'b01),
 	.ce             (apu_ce),
-	.overclock      (effective_overclock),
+	.overclock      (overclock),
 	.reset          (reset),
 	.cold_reset     (cold_reset),
 	.ADDR           (addr[4:0]),
@@ -663,7 +656,7 @@ assign scanline = (corepause_active) ? scanline_paused : scanline_ppu;
 
 PPU ppu(
 	.clk              (clk),
-	.cs               (addr[15:13] == 3'b001 && ((effective_overclock == 2'd2) ? ~ppu_action_done : phi2)),
+	.cs               (addr[15:13] == 3'b001 && phi2),
 	.RWn              (mr_int && !mw_int),
 	.rst_behavior     (ppu_rst_behavior),
 	.ce               (ppu_ce),

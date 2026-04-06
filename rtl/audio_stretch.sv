@@ -57,7 +57,8 @@ logic [15:0] step;
 always_comb begin
 	case (overclock)
 		2'd1:    step = 16'hC000;
-		2'd2:    step = 16'h8000;
+		2'd2:    step = 16'hAAAA;
+		2'd3:    step = 16'h8000;
 		default: step = 16'hFFFF;
 	endcase
 end
@@ -95,7 +96,10 @@ logic       hold_ce;          // 1 on ticks where we commit to sample_out
 
 always_ff @(posedge clk) begin
 	if (sample_ce) begin
-		out_cnt <= out_cnt + 2'd1;
+		if (overclock == 2'd2)
+			out_cnt <= (out_cnt == 2'd2) ? 2'd0 : out_cnt + 2'd1;
+		else
+			out_cnt <= out_cnt + 2'd1;
 
 		// Advance NCO and consume new input when phase overflows
 		{phase_ovf, phase} <= {1'b0, phase} + {1'b0, step};
@@ -107,13 +111,11 @@ always_ff @(posedge clk) begin
 end
 
 // hold_ce: 1 when we should commit interp to sample_out
-// Full: every 2nd tick (out_cnt[0] == 0)
-// Mild: 3 of 4 ticks (skip when out_cnt == 3)
-// Off : every tick
 assign hold_ce = sample_ce & (
-	(overclock == 2'd2) ? (out_cnt[0] == 1'b0)  :   // Full: every 2nd
-	(overclock == 2'd1) ? (out_cnt != 2'd3)      :   // Mild: 3 of 4
-	                      1'b1                        // Off:  every
+	(overclock == 2'd1) ? (out_cnt != 2'd3)    :   // Turbo: 3 of 4
+	(overclock == 2'd2) ? (out_cnt != 2'd2)    :   // Medium: 2 of 3
+	(overclock == 2'd3) ? (out_cnt[0] == 1'b0) :   // Extreme: every 2nd
+	                      1'b1                     // Off:  every
 );
 
 // Output register: only advances at the gated 1x rate

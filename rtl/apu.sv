@@ -954,13 +954,18 @@ module APU #(parameter [9:0] SSREG_INDEX_TOP, parameter [9:0] SSREG_INDEX_DMC1, 
 	// -----------------------------------------------------------------------
 	reg [1:0] pitch_cnt = 0;
 	always_ff @(posedge clk) begin
-		if (ce & ~get_or_put)
-			pitch_cnt <= pitch_cnt + 2'd1;
+		if (ce & ~get_or_put) begin
+			if (overclock == 2'd2)
+				pitch_cnt <= (pitch_cnt == 2'd2) ? 2'd0 : pitch_cnt + 2'd1; // Modulo 3 for Medium 1.5x
+			else
+				pitch_cnt <= pitch_cnt + 2'd1; // Modulo 4
+		end
 	end
 
 	wire pitch_ce =
-		(overclock == 2'd1) ? (pitch_cnt != 2'd3) : // Mild: enable 3/4 ticks
-		(overclock == 2'd2) ? (pitch_cnt[0] == 1'b0) : // Full: enable 1/2 ticks
+		(overclock == 2'd1) ? (pitch_cnt != 2'd3)    : // Turbo (1.33x)  : enable 3/4 ticks
+		(overclock == 2'd2) ? (pitch_cnt != 2'd2)    : // Medium (1.50x) : enable 2/3 ticks
+		(overclock == 2'd3) ? (pitch_cnt[0] == 1'b0) : // Extreme (2.00x): enable 1/2 ticks
 		1'b1;                                          // Off: all ticks enabled
 
 	logic aclk1, aclk2, aclk1_delayed, phi1;
