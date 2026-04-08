@@ -297,6 +297,9 @@ wire [9:0] oc_extra_lines =
 	(overclock == 2'd3) ? ((sys_type == 2'b00) ? 10'd262 : 10'd312) : // Extreme (2.00x PPU clock extension)
 	10'd0;
 
+wire [9:0] max_native_sl = (sys_type == 2'b00) ? 10'd261 : 10'd311;
+wire mapper_irq_pause = (scanline > max_native_sl);
+
 // The infamous NES jitter is important for accuracy, but wreks havok on modern devices and scalers,
 // so what I do here is pause the whole system for one PPU clock and insert a "fake" ppu clock to
 // replace the missing pixel. Thus the system runs accurately (ableit a few nanoseconds per frame slower)
@@ -554,6 +557,8 @@ DmaController dma(
 );
 
 
+
+
 /**********************************************************/
 /*************             APU              ***************/
 /**********************************************************/
@@ -757,6 +762,7 @@ cart_top multi_mapper (
 	.irq               (mapper_irq),              // IRQ (inverted, active high)
 	.audio_in          (audio_mappers),           // Amplified and inverted APU audio
 	.audio             (sample_ext),              // Mixed audio output from cart
+	.mapper_irq_pause  (mapper_irq_pause),        // Pause cycle-based mappers during OC extended Vblank
 	.mapper_ce         (mapper_ce),               // Always runs at unoverclocked 1.78MHz
 	.overclock         (overclock),               // OC mode for expansion audio pitch correction
 	.smooth_audio      (smooth_audio),            // Option toggle

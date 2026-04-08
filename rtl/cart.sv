@@ -64,6 +64,7 @@ module cart_top (
 	input       [1:0] max_diskside,   // FDS disk side count
 	input             fds_fast,       // FDS disk access speed
 	input             mapper_ce,      // Standard ~1.78MHz CPU speed
+	input             mapper_irq_pause, // Pause cycle-based mappers during OC extended Vblank
 	input       [1:0] overclock,      // Overclock mode (0=off, 1=turbo, 2=medium, 3=extreme)
 	input             smooth_audio,   // Smooth Audio option
 	input             isolation_mode, // Isolation mode option
@@ -1534,6 +1535,7 @@ NesEvent nesev(
 VRC1 vrc1(
 	.clk        (clk),
 	.ce         (ce),
+	.mapper_irq_pause(mapper_irq_pause),
 	.enable     (me[75]),
 	.flags      (flags),
 	.prg_ain    (prg_ain),
@@ -1575,6 +1577,7 @@ VRC1 vrc1(
 VRC3 vrc3(
 	.clk        (clk),
 	.ce         (ce),
+	.mapper_irq_pause(mapper_irq_pause),
 	.enable     (me[73]),
 	.flags      (flags),
 	.prg_ain    (prg_ain),
@@ -1616,6 +1619,7 @@ VRC3 vrc3(
 VRC24 vrc24(
 	.clk        (clk),
 	.ce         (ce),
+	.mapper_irq_pause(mapper_irq_pause),
 	.enable     (me[21] | me[22] | me[23] | me[25] | me[27]),
 	.flags      (flags),
 	.prg_ain    (prg_ain),
@@ -1657,6 +1661,7 @@ VRC24 vrc24(
 VRC5 vrc5(
 	.clk        (clk),
 	.ce         (ce),
+	.mapper_irq_pause(mapper_irq_pause),
 	.enable     (me[547]),
 	.flags      (flags),
 	.prg_ain    (prg_ain),
@@ -1710,6 +1715,7 @@ VRC5 vrc5(
 VRC6 vrc6(
 	.clk        (clk),
 	.ce         (ce),
+	.mapper_irq_pause(mapper_irq_pause),
 	.enable     (me[24] | me[26]),
 	.flags      (flags),
 	.prg_ain    (prg_ain),
@@ -1751,6 +1757,7 @@ VRC6 vrc6(
 VRC7 vrc7(
 	.clk        (clk),
 	.ce         (ce),
+	.mapper_irq_pause(mapper_irq_pause),
 	.enable     (me[85]),
 	.flags      (flags),
 	.prg_ain    (prg_ain),

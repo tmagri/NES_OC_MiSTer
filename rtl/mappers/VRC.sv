@@ -5,6 +5,7 @@ module VRC1(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
 	input        mapper_ce,   // Native un-overclocked M2
+	input        mapper_irq_pause,
 	input        smooth_audio,
 	input        isolation_mode,
 	input        enable,      // Mapper enabled
@@ -135,6 +136,7 @@ module VRC3(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
 	input        mapper_ce,   // Native un-overclocked M2
+	input        mapper_irq_pause,
 	input        smooth_audio,
 	input        isolation_mode,
 	input        enable,      // Mapper enabled
@@ -272,6 +274,7 @@ module VRC24(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
 	input        mapper_ce,   // Native un-overclocked M2
+	input        mapper_irq_pause,
 	input        smooth_audio,
 	input        isolation_mode,
 	input        enable,      // Mapper enabled
@@ -457,6 +460,7 @@ wire irqa  = {prg_ain[15:12],registers[1:0]}==6'b1111_11; // 0xF003
 wire irqout;
 assign irq = irqout & mapperVRC4;
 vrcIRQ vrc4irq (
+	.mapper_irq_pause(mapper_irq_pause),
 	.clk20            (clk),
 	.vrc5             (1'b0),
 	.enable           (enable),
@@ -495,6 +499,7 @@ module VRC6(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
 	input        mapper_ce,   // Native un-overclocked M2
+	input        mapper_irq_pause,
 	input        smooth_audio,
 	input        isolation_mode,
 	input        enable,      // Mapper enabled
@@ -575,7 +580,7 @@ MAPVRC6 vrc6
 	neschrdout, neschr_oe, chr_allow, chrram_oe, wram_oe, wram_we, prgram_we,
 	prgram_oe, chr_aout[18:10], ramprgaout, irq, vram_ce,// exp6,
 	0, 7'b1111111, 6'b111111, flags[14], flags[16], flags[15],
-	ce, mapper_ce, flags[1],
+	ce, mapper_ce, mapper_irq_pause, flags[1],
 	// savestates
 	SaveStateBus_Din, 
 	SaveStateBus_Adr,
@@ -601,6 +606,7 @@ module VRC7(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
 	input        mapper_ce,   // Native un-overclocked M2
+	input        mapper_irq_pause,
 	input        smooth_audio,
 	input        isolation_mode,
 	input        enable,      // Mapper enabled
@@ -719,6 +725,7 @@ wire irqc = {prg_ain[15:12],prg_ain43}==5'b11110; // 0xF000
 wire irqa = {prg_ain[15:12],prg_ain43}==5'b11111; // 0xF008 or 0xF010
 
 vrcIRQ vrc7irq (
+	.mapper_irq_pause(mapper_irq_pause),
 	.clk20       (clk),
 	.vrc5        (1'b0),
 	.enable      (enable),
@@ -778,6 +785,7 @@ module MAPVRC6(     //signal descriptions in powerpak.v
 
 	input ce,// add
 	input mapper_ce,
+	input mapper_irq_pause,
 	//output [15:0] audio,
 	input mapper26,
 	// savestates              
@@ -877,6 +885,7 @@ module MAPVRC6(     //signal descriptions in powerpak.v
 	end
 
 	vrcIRQ vrc6irq (
+		.mapper_irq_pause(mapper_irq_pause),
 	.clk20            (clk20),
 	.vrc5             (1'b0),
 	.enable           (enable),
@@ -948,6 +957,7 @@ module vrcIRQ(
 	input [7:0] nesprgdin,
 	output irq,
 	input ce,
+	input mapper_irq_pause,
 	input mapper_ce,
 	// savestates              
 	input       [63:0]  SaveStateBus_Din,
@@ -1005,7 +1015,7 @@ always@(posedge clk20) begin
 		line<=0;
 		irqcnt<=irqlatch;
 		irqcntL<=irqlatchL;
-	end else if(mapper_ce && irqE) begin
+	end else if(ce && irqE && !mapper_irq_pause) begin
 		if(scalar!=0)
 			scalar<=scalar-1'd1;
 		else begin
@@ -1034,7 +1044,7 @@ always@(posedge clk20) begin
 	end else begin
 		if(ce & nesprg_we & (irqctrl_add | irqack_add)) //write Fxx1 or Fxx2
 			timeout<=0;
-		else if(mapper_ce & irqclk & irqcnt==255 && (!vrc5 | irqcntL==255))
+		else if(ce & irqclk & irqcnt==255 && (!vrc5 | irqcntL==255))
 			timeout<=1;
 
 		if(ce) begin
@@ -1445,6 +1455,7 @@ module VRC5(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
 	input        mapper_ce,   // Native un-overclocked M2
+	input        mapper_irq_pause,
 	input        smooth_audio,
 	input        isolation_mode,
 	input        enable,      // Mapper enabled
@@ -1679,6 +1690,7 @@ wire irqa  = prg_ain[15:8]==8'hD8; // 0xF003<=0xD800
 wire irqout;
 assign irq = irqout;
 vrcIRQ vrc5irq (
+	.mapper_irq_pause(mapper_irq_pause),
 	.clk20            (clk),
 	.vrc5             (1'b1),
 	.enable           (enable),
