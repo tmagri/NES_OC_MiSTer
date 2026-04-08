@@ -1128,6 +1128,7 @@ module vrc6_mixed (
 	input         clk,
 	input         ce,    // Negedge M2 (aka CPU ce)
 	input         mapper_ce,
+	input   [1:0] overclock,
 	input         smooth_audio,
 	input         isolation_mode,
 	input         enable,
@@ -1149,6 +1150,7 @@ module vrc6_mixed (
 vrc6sound snd_vrc6 (
 	.clk(clk),
 	.ce(ce),
+	.overclock(overclock),
 	.enable(enable),
 	.wr(wren),
 	.addr_invert(addr_invert),
@@ -1199,6 +1201,7 @@ endmodule
 module vrc6sound(
 	input clk,
 	input ce,
+	input [1:0] overclock,
 	input enable,
 	input wr,
 	input addr_invert,
@@ -1270,6 +1273,29 @@ wire [7:0]  inc_1  = err_2 >= fa_1 ? 8'd1 : 8'd0;
 
 wire [7:0] total_inc = inc_32 + inc_16 + inc_8 + inc_4 + inc_2 + inc_1;
 
+// -----------------------------------------------------------------------
+// Overclock Pitch Corrector (matches APU pitch_ce logic)
+// Frequency dividers must tick at 1x rate to preserve correct pitch.
+// Register writes remain at full overclocked ce rate so CPU writes aren't lost.
+// -----------------------------------------------------------------------
+reg [1:0] pitch_cnt = 0;
+always @(posedge clk) begin
+	if (~enable)
+		pitch_cnt <= 0;
+	else if (ce) begin
+		if (overclock == 2'd2)
+			pitch_cnt <= (pitch_cnt == 2'd2) ? 2'd0 : pitch_cnt + 2'd1; // Modulo 3 for Medium 1.5x
+		else
+			pitch_cnt <= pitch_cnt + 2'd1; // Modulo 4 (wraps naturally)
+	end
+end
+
+wire pitch_ce =
+	(overclock == 2'd1) ? (pitch_cnt != 2'd3)    : // Turbo (1.33x)  : enable 3/4 ticks
+	(overclock == 2'd2) ? (pitch_cnt != 2'd2)    : // Medium (1.50x) : enable 2/3 ticks
+	(overclock == 2'd3) ? (pitch_cnt[0] == 1'b0) : // Extreme (2.00x): enable 1/2 ticks
+	1'b1;                                          // Off: all ticks enabled
+
 always@(posedge clk) begin
 	if(~enable) begin
 		en0<=0;
@@ -1317,49 +1343,51 @@ always@(posedge clk) begin
 				16'hB002: {en2, freq2[11:8]}<={din[7],din[3:0]};
 			endcase
 		end
-		if(en0) begin
-			if(div0!=0)
-				div0<=div0-1'd1;
-			else begin
-				div0<=freq0;
-				duty0cnt<=duty0cnt+1'd1;
-			end
-		end
-		if(en1) begin
-			if(div1!=0)
-				div1<=div1-1'd1;
-			else begin
-				div1<=freq1;
-				duty1cnt<=duty1cnt+1'd1;
-			end
-		end
-		if(en2) begin
-			if(div2!=0) begin
-				div2<=div2-1'd1;
-				if (freq2_adj < 14'd16) begin
-					// Bypass mathematically filtering for ultra-high frequencies (~111 kHz base sample step)
-					smooth_acc <= {acc, 4'd0}; 
-					err_acc <= 0;
-				end else begin
-					err_acc <= err_1[14:0];
-					smooth_acc <= smooth_acc + total_inc; // Purposely allows hardware-accurate 12-bit overflow wrapping
-				end
-			end else begin
-				div2<={freq2,1'b1};
-				if(duty2cnt==6) begin
-					duty2cnt<=0;
-					acc<=0;
-					smooth_acc<=0;
-					err_acc<=0;
-				end else begin
-					duty2cnt<=duty2cnt+1'd1;
-					acc<=acc+vol2;
-					// Re-sync explicitly at step boundaries to permanently prevent fractional drift
-					smooth_acc<={(acc+vol2), 4'd0}; 
-					err_acc<=0;
+		if(pitch_ce) begin  // Gate frequency dividers at 1x rate
+			if(en0) begin
+				if(div0!=0)
+					div0<=div0-1'd1;
+				else begin
+					div0<=freq0;
+					duty0cnt<=duty0cnt+1'd1;
 				end
 			end
-		end
+			if(en1) begin
+				if(div1!=0)
+					div1<=div1-1'd1;
+				else begin
+					div1<=freq1;
+					duty1cnt<=duty1cnt+1'd1;
+				end
+			end
+			if(en2) begin
+				if(div2!=0) begin
+					div2<=div2-1'd1;
+					if (freq2_adj < 14'd16) begin
+						// Bypass mathematically filtering for ultra-high frequencies (~111 kHz base sample step)
+						smooth_acc <= {acc, 4'd0}; 
+						err_acc <= 0;
+					end else begin
+						err_acc <= err_1[14:0];
+						smooth_acc <= smooth_acc + total_inc; // Purposely allows hardware-accurate 12-bit overflow wrapping
+					end
+				end else begin
+					div2<={freq2,1'b1};
+					if(duty2cnt==6) begin
+						duty2cnt<=0;
+						acc<=0;
+						smooth_acc<=0;
+						err_acc<=0;
+					end else begin
+						duty2cnt<=duty2cnt+1'd1;
+						acc<=acc+vol2;
+						// Re-sync explicitly at step boundaries to permanently prevent fractional drift
+						smooth_acc<={(acc+vol2), 4'd0}; 
+						err_acc<=0;
+					end
+				end
+			end
+		end  // pitch_ce
 	end
 end
 

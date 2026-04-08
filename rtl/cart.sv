@@ -64,6 +64,7 @@ module cart_top (
 	input       [1:0] max_diskside,   // FDS disk side count
 	input             fds_fast,       // FDS disk access speed
 	input             mapper_ce,      // Standard ~1.78MHz CPU speed
+	input       [1:0] overclock,      // Overclock mode (0=off, 1=turbo, 2=medium, 3=extreme)
 	input             smooth_audio,   // Smooth Audio option
 	input             isolation_mode, // Isolation mode option
 	// savestates              
@@ -2444,6 +2445,7 @@ vrc6_mixed snd_vrc6 (
 	.audio_in       (audio_in),
 	.audio_out      (vrc6_audio),
 	.mapper_ce      (mapper_ce),
+	.overclock      (overclock),
 	.smooth_audio   (smooth_audio),
 	.isolation_mode (isolation_mode),
 	// savestates

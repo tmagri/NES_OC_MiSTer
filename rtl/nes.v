@@ -758,6 +758,7 @@ cart_top multi_mapper (
 	.audio_in          (audio_mappers),           // Amplified and inverted APU audio
 	.audio             (sample_ext),              // Mixed audio output from cart
 	.mapper_ce         (mapper_ce),               // Always runs at unoverclocked 1.78MHz
+	.overclock         (overclock),               // OC mode for expansion audio pitch correction
 	.smooth_audio      (smooth_audio),            // Option toggle
 	.isolation_mode    (isolation_mode),
 	// SDRAM Communication
