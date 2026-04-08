@@ -839,7 +839,7 @@ Mapper67 map67(
 	.vram_ce_b  (vram_ce_b),
 	.irq_b      (irq_b),
 	.flags_out_b(flags_out_b),
-	.mapper_ce  (mapper_ce),
+	.mapper_ce      (mapper_ce),
 	.audio_in   (audio_in),
 	.audio_b    (audio_out_b),
 	// savestates
@@ -916,7 +916,7 @@ Mapper69 map69(
 	.vram_ce_b  (vram_ce_b),
 	.irq_b      (irq_b),
 	.flags_out_b(flags_out_b),
-	.mapper_ce  (mapper_ce),
+	.mapper_ce      (mapper_ce),
 	.audio_in   (ss5b_audio),
 	.audio_b    (audio_out_b),
 	// savestates
@@ -1550,7 +1550,9 @@ VRC1 vrc1(
 	.vram_ce_b  (vram_ce_b),
 	.irq_b      (irq_b),
 	.flags_out_b(flags_out_b),
-	.mapper_ce  (mapper_ce),
+	.mapper_ce      (mapper_ce),
+	.smooth_audio   (smooth_audio),
+	.isolation_mode (isolation_mode),
 	.audio_in   (audio_in),
 	.audio_b    (audio_out_b),
 	// savestates
@@ -1589,7 +1591,9 @@ VRC3 vrc3(
 	.vram_ce_b  (vram_ce_b),
 	.irq_b      (irq_b),
 	.flags_out_b(flags_out_b),
-	.mapper_ce  (mapper_ce),
+	.mapper_ce      (mapper_ce),
+	.smooth_audio   (smooth_audio),
+	.isolation_mode (isolation_mode),
 	.audio_in   (audio_in),
 	.audio_b    (audio_out_b),
 	// savestates
@@ -1628,7 +1632,9 @@ VRC24 vrc24(
 	.vram_ce_b  (vram_ce_b),
 	.irq_b      (irq_b),
 	.flags_out_b(flags_out_b),
-	.mapper_ce  (mapper_ce),
+	.mapper_ce      (mapper_ce),
+	.smooth_audio   (smooth_audio),
+	.isolation_mode (isolation_mode),
 	.audio_in   (audio_in),
 	.audio_b    (audio_out_b),
 	// savestates
@@ -1667,6 +1673,9 @@ VRC5 vrc5(
 	.vram_ce_b  (vram_ce_b),
 	.irq_b      (irq_b),
 	.flags_out_b(flags_out_b),
+	.mapper_ce      (mapper_ce),
+	.smooth_audio   (smooth_audio),
+	.isolation_mode (isolation_mode),
 	.audio_in   (audio_in),
 	.audio_b    (audio_out_b),
 	// Special ports
@@ -1717,9 +1726,11 @@ VRC6 vrc6(
 	.vram_ce_b  (vram_ce_b),
 	.irq_b      (irq_b),
 	.flags_out_b(flags_out_b),
-	.mapper_ce  (mapper_ce),
-	.audio_in   (vrc6_audio),
-	.audio_b    (audio_out_b),
+	.mapper_ce      (mapper_ce),
+	.smooth_audio   (smooth_audio),
+	.isolation_mode (isolation_mode),
+	.audio_in       (vrc6_audio),
+	.audio_b   (audio_out_b),
 	// savestates
 	.SaveStateBus_Din  (SaveStateBus_Din ), 
 	.SaveStateBus_Adr  (SaveStateBus_Adr ),
@@ -1756,9 +1767,11 @@ VRC7 vrc7(
 	.vram_ce_b  (vram_ce_b),
 	.irq_b      (irq_b),
 	.flags_out_b(flags_out_b),
-	.mapper_ce  (mapper_ce),
-	.audio_in   (vrc7_audio),
-	.audio_b    (audio_out_b)
+	.mapper_ce      (mapper_ce),
+	.smooth_audio   (smooth_audio),
+	.isolation_mode (isolation_mode),
+	.audio_in       (vrc7_audio),
+	.audio_b   (audio_out_b)
 );
 
 //*****************************************************************************//
@@ -1788,7 +1801,7 @@ N163 n163(
 	.vram_ce_b  (vram_ce_b),
 	.irq_b      (irq_b),
 	.flags_out_b(flags_out_b),
-	.mapper_ce  (mapper_ce),
+	.mapper_ce      (mapper_ce),
 	.audio_in   (n163_audio),
 	.audio_b    (audio_out_b),
 	// Special ports
@@ -2412,9 +2425,11 @@ vrc7_mixed snd_vrc7 (
 	.wren(prg_write),
 	.addr_in(prg_ain),
 	.data_in(prg_din),
-	.audio_in(audio_in),
-	.audio_out(vrc7_audio),
-	.isolation_mode(isolation_mode)
+	.audio_in       (audio_in),
+	.audio_out      (vrc7_audio),
+	.mapper_ce      (mapper_ce),
+	.smooth_audio   (smooth_audio),
+	.isolation_mode (isolation_mode)
 );
 
 wire [15:0] vrc6_audio;
@@ -2426,10 +2441,11 @@ vrc6_mixed snd_vrc6 (
 	.addr_invert(me[26]),
 	.addr_in(prg_ain),
 	.data_in(prg_din),
-	.audio_in(audio_in),
-	.audio_out(vrc6_audio),
-	.smooth_audio(smooth_audio),
-	.isolation_mode(isolation_mode),
+	.audio_in       (audio_in),
+	.audio_out      (vrc6_audio),
+	.mapper_ce      (mapper_ce),
+	.smooth_audio   (smooth_audio),
+	.isolation_mode (isolation_mode),
 	// savestates
 	.SaveStateBus_Din  (SaveStateBus_Din ), 
 	.SaveStateBus_Adr  (SaveStateBus_Adr ),

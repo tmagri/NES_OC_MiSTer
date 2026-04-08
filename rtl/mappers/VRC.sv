@@ -5,6 +5,8 @@ module VRC1(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
 	input        mapper_ce,   // Native un-overclocked M2
+	input        smooth_audio,
+	input        isolation_mode,
 	input        enable,      // Mapper enabled
 	input [31:0] flags,       // Cart flags
 	input [15:0] prg_ain,     // prg address
@@ -133,6 +135,8 @@ module VRC3(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
 	input        mapper_ce,   // Native un-overclocked M2
+	input        smooth_audio,
+	input        isolation_mode,
 	input        enable,      // Mapper enabled
 	input [31:0] flags,       // Cart flags
 	input [15:0] prg_ain,     // prg address
@@ -268,6 +272,8 @@ module VRC24(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
 	input        mapper_ce,   // Native un-overclocked M2
+	input        smooth_audio,
+	input        isolation_mode,
 	input        enable,      // Mapper enabled
 	input [31:0] flags,       // Cart flags
 	input [15:0] prg_ain,     // prg address
@@ -450,16 +456,25 @@ wire irqc  = {prg_ain[15:12],registers[1:0]}==6'b1111_10; // 0xF002
 wire irqa  = {prg_ain[15:12],registers[1:0]}==6'b1111_11; // 0xF003
 wire irqout;
 assign irq = irqout & mapperVRC4;
-vrcIRQ vrc4irq
-(
-	clk,1'b0,enable,prg_write,{irqlh,irqll},irqc,irqa,prg_din,irqout,ce, mapper_ce,
+vrcIRQ vrc4irq (
+	.clk20            (clk),
+	.vrc5             (1'b0),
+	.enable           (enable),
+	.nesprg_we        (prg_write),
+	.irqlatch_add     ({irqlh, irqll}),
+	.irqctrl_add      (irqc),
+	.irqack_add       (irqa),
+	.nesprgdin        (prg_din),
+	.irq              (irqout),
+	.ce               (ce),
+	.mapper_ce        (mapper_ce),
 	// savestates
-	SaveStateBus_Din, 
-	SaveStateBus_Adr,
-	SaveStateBus_wren,
-	SaveStateBus_rst,
-	SaveStateBus_load,
-	SaveStateBus_wired_or[2]
+	.SaveStateBus_Din (SaveStateBus_Din),
+	.SaveStateBus_Adr (SaveStateBus_Adr),
+	.SaveStateBus_wren(SaveStateBus_wren),
+	.SaveStateBus_rst (SaveStateBus_rst),
+	.SaveStateBus_load(SaveStateBus_load),
+	.SaveStateBus_Dout(SaveStateBus_wired_or[2])
 );
 
 // savestate
@@ -480,6 +495,8 @@ module VRC6(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
 	input        mapper_ce,   // Native un-overclocked M2
+	input        smooth_audio,
+	input        isolation_mode,
 	input        enable,      // Mapper enabled
 	input [31:0] flags,       // Cart flags
 	input [15:0] prg_ain,     // prg address
@@ -505,7 +522,7 @@ module VRC6(
 	input               SaveStateBus_wren,
 	input               SaveStateBus_rst,
 	input               SaveStateBus_load,
-	output      [63:0]  SaveStateBus_Dout, input isolation_mode
+	output      [63:0]  SaveStateBus_Dout
 );
 
 assign prg_aout_b   = enable ? prg_aout : 22'hZ;
@@ -558,7 +575,7 @@ MAPVRC6 vrc6
 	neschrdout, neschr_oe, chr_allow, chrram_oe, wram_oe, wram_we, prgram_we,
 	prgram_oe, chr_aout[18:10], ramprgaout, irq, vram_ce,// exp6,
 	0, 7'b1111111, 6'b111111, flags[14], flags[16], flags[15],
-	ce, flags[1],
+	ce, mapper_ce, flags[1],
 	// savestates
 	SaveStateBus_Din, 
 	SaveStateBus_Adr,
@@ -584,6 +601,8 @@ module VRC7(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
 	input        mapper_ce,   // Native un-overclocked M2
+	input        smooth_audio,
+	input        isolation_mode,
 	input        enable,      // Mapper enabled
 	input [31:0] flags,       // Cart flags
 	input [15:0] prg_ain,     // prg address
@@ -699,7 +718,19 @@ wire irql = {prg_ain[15:12],prg_ain43}==5'b11101; // 0xE008 or 0xE010
 wire irqc = {prg_ain[15:12],prg_ain43}==5'b11110; // 0xF000
 wire irqa = {prg_ain[15:12],prg_ain43}==5'b11111; // 0xF008 or 0xF010
 
-vrcIRQ vrc7irq(clk,1'b0,enable,prg_write,{irql,irql},irqc,irqa,prg_din,irq,ce,mapper_ce);
+vrcIRQ vrc7irq (
+	.clk20       (clk),
+	.vrc5        (1'b0),
+	.enable      (enable),
+	.nesprg_we   (prg_write),
+	.irqlatch_add({irql, irql}),
+	.irqctrl_add (irqc),
+	.irqack_add  (irqa),
+	.nesprgdin   (prg_din),
+	.irq         (irq),
+	.ce          (ce),
+	.mapper_ce   (mapper_ce)
+);
 
 endmodule
 
@@ -845,17 +876,26 @@ module MAPVRC6(     //signal descriptions in powerpak.v
 		end
 	end
 
-	vrcIRQ vrc6irq
-	(
-		clk20,1'b0,enable,nesprg_we,{irql,irql},irqc,irqa,nesprgdin,irq,ce,
-		// savestates
-		SaveStateBus_Din, 
-		SaveStateBus_Adr,
-		SaveStateBus_wren,
-		SaveStateBus_rst,
-		SaveStateBus_load,
-		SaveStateBus_wired_or[2]
-	);
+	vrcIRQ vrc6irq (
+	.clk20            (clk20),
+	.vrc5             (1'b0),
+	.enable           (enable),
+	.nesprg_we        (nesprg_we),
+	.irqlatch_add     ({irql, irql}),
+	.irqctrl_add      (irqc),
+	.irqack_add       (irqa),
+	.nesprgdin        (nesprgdin),
+	.irq              (irq),
+	.ce               (ce),
+	.mapper_ce        (mapper_ce),
+	// savestates
+	.SaveStateBus_Din (SaveStateBus_Din),
+	.SaveStateBus_Adr (SaveStateBus_Adr),
+	.SaveStateBus_wren(SaveStateBus_wren),
+	.SaveStateBus_rst (SaveStateBus_rst),
+	.SaveStateBus_load(SaveStateBus_load),
+	.SaveStateBus_Dout(SaveStateBus_wired_or[2])
+);
 
 //mirroring
 	assign ramchraout[10]=!chrain[13] ? chrbank[10] : ((mirror==0 & chrain[10]) | (mirror==1 & chrain[11]) | (mirror==3));
@@ -1029,14 +1069,16 @@ endmodule
 
 module vrc7_mixed (
 	input         clk,
-	input         ce,    // Negedge M2 (aka CPU ce)
+	input         ce,
+	input         mapper_ce,
+	input         smooth_audio,
+	input         isolation_mode,
 	input         enable,
 	input         wren,
 	input  [15:0] addr_in,
 	input   [7:0] data_in,
-	input  [15:0] audio_in,    // Inverted audio from APU
-	output [15:0] audio_out,
-	input         isolation_mode
+	input  [15:0] audio_in,
+	output [15:0] audio_out
 );
 
 reg soff;
@@ -1085,6 +1127,9 @@ endmodule
 module vrc6_mixed (
 	input         clk,
 	input         ce,    // Negedge M2 (aka CPU ce)
+	input         mapper_ce,
+	input         smooth_audio,
+	input         isolation_mode,
 	input         enable,
 	input         wren,
 	input         addr_invert,
@@ -1092,14 +1137,13 @@ module vrc6_mixed (
 	input   [7:0] data_in,
 	input  [15:0] audio_in,    // Inverted audio from APU
 	output [15:0] audio_out,
-	input         smooth_audio, // NEW
 	// savestates              
 	input       [63:0]  SaveStateBus_Din,
 	input       [ 9:0]  SaveStateBus_Adr,
 	input               SaveStateBus_wren,
 	input               SaveStateBus_rst,
 	input               SaveStateBus_load,
-	output      [63:0]  SaveStateBus_Dout, input isolation_mode
+	output      [63:0]  SaveStateBus_Dout
 );
 
 vrc6sound snd_vrc6 (
@@ -1373,6 +1417,8 @@ module VRC5(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
 	input        mapper_ce,   // Native un-overclocked M2
+	input        smooth_audio,
+	input        isolation_mode,
 	input        enable,      // Mapper enabled
 	input [31:0] flags,       // Cart flags
 	input [15:0] prg_ain,     // prg address
@@ -1604,16 +1650,25 @@ wire irqc  = prg_ain[15:8]==8'hD9; // 0xF002<=0xD900
 wire irqa  = prg_ain[15:8]==8'hD8; // 0xF003<=0xD800
 wire irqout;
 assign irq = irqout;
-vrcIRQ vrc5irq
-(
-	clk,1'b1,enable,prg_write,{irqlh|irqll,irqlh},irqc,irqa,prg_din,irqout,ce,mapper_ce,
+vrcIRQ vrc5irq (
+	.clk20            (clk),
+	.vrc5             (1'b1),
+	.enable           (enable),
+	.nesprg_we        (prg_write),
+	.irqlatch_add     ({irqlh | irqll, irqlh}),
+	.irqctrl_add      (irqc),
+	.irqack_add       (irqa),
+	.nesprgdin        (prg_din),
+	.irq              (irqout),
+	.ce               (ce),
+	.mapper_ce        (mapper_ce),
 	// savestates
-	SaveStateBus_Din, 
-	SaveStateBus_Adr,
-	SaveStateBus_wren,
-	SaveStateBus_rst,
-	SaveStateBus_load,
-	SaveStateBus_wired_or[2]
+	.SaveStateBus_Din (SaveStateBus_Din),
+	.SaveStateBus_Adr (SaveStateBus_Adr),
+	.SaveStateBus_wren(SaveStateBus_wren),
+	.SaveStateBus_rst (SaveStateBus_rst),
+	.SaveStateBus_load(SaveStateBus_load),
+	.SaveStateBus_Dout(SaveStateBus_wired_or[2])
 );
 
 // savestate
