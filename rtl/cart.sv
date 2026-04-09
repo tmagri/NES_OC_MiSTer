@@ -64,6 +64,7 @@ module cart_top (
 	input       [1:0] max_diskside,   // FDS disk side count
 	input             fds_fast,       // FDS disk access speed
 	input             mapper_ce,      // Standard ~1.78MHz CPU speed
+	input             put_ce,         // CPU write phase clock enable (for synchronized expansion audio)
 	input             mapper_irq_pause, // Pause cycle-based mappers during OC extended Vblank
 	input       [1:0] overclock,      // Overclock mode (0=off, 1=turbo, 2=medium, 3=extreme)
 	input             smooth_audio,   // Smooth Audio option
@@ -355,6 +356,7 @@ MMC3 mmc3 (
 	.chr_ain_o  (chr_ain_orig),
 	.m2_inv     (cpu_ce),
 	.paused     (paused),
+	.mapper_irq_pause(mapper_irq_pause),
 	// savestates
 	.SaveStateBus_Din  (SaveStateBus_Din ), 
 	.SaveStateBus_Adr  (SaveStateBus_Adr ),
@@ -1290,7 +1292,8 @@ Mapper165 map165(
 	// Special ports
 	.chr_ain_o  (chr_ain_orig),
 	.m2_inv     (cpu_ce),
-	.paused     (paused)
+	.paused     (paused),
+	.mapper_irq_pause(mapper_irq_pause)
 );
 
 //*****************************************************************************//
@@ -1483,6 +1486,7 @@ Rambo1 rambo1(
 	.audio_b    (audio_out_b),
 	// Special ports
 	.chr_ain_o  (chr_ain_orig),
+	.mapper_irq_pause(mapper_irq_pause),
 	// savestates
 	.SaveStateBus_Din  (SaveStateBus_Din ), 
 	.SaveStateBus_Adr  (SaveStateBus_Adr ),
@@ -2233,7 +2237,8 @@ Mapper413 map413 (
 	.chr_ain_o  (chr_ain_orig),
 	.prg_aoute  (prg_aoute_m413),
 	.m2_inv     (cpu_ce),
-	.paused     (paused)
+	.paused     (paused),
+	.mapper_irq_pause(mapper_irq_pause)
 );
 
 //*****************************************************************************//
@@ -2444,6 +2449,7 @@ vrc6_mixed snd_vrc6 (
 	.audio_in       (audio_in),
 	.audio_out      (vrc6_audio),
 	.mapper_ce      (mapper_ce),
+	.put_ce         (put_ce),
 	.overclock      (overclock),
 	.smooth_audio   (smooth_audio),
 	// savestates

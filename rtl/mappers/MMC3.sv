@@ -30,7 +30,8 @@ module Rambo1(
 	input               SaveStateBus_wren,
 	input               SaveStateBus_rst,
 	input               SaveStateBus_load,
-	output      [63:0]  SaveStateBus_Dout
+	output      [63:0]  SaveStateBus_Dout,
+	input               mapper_irq_pause
 );
 
 assign prg_aout_b   = enable ? prg_aout : 22'hZ;
@@ -142,7 +143,7 @@ end else if (SaveStateBus_load) begin
 	prg_bank_2         <= SS_MAP2[41:36];
 	chr_bank_8         <= SS_MAP2[49:42];
 	chr_bank_9         <= SS_MAP2[57:50];
-end else if (ce) begin
+end else if (ce && !mapper_irq_pause) begin
 	// Process these before writes so irq_reload and cycle_counter register writes take precedence.
 	cycle_counter <= cycle_counter + 1'd1;
 	irq_cycle_mode <= next_irq_cycle_mode;
@@ -331,7 +332,8 @@ module MMC3 (
 	input               SaveStateBus_wren,
 	input               SaveStateBus_rst,
 	input               SaveStateBus_load,
-	output      [63:0]  SaveStateBus_Dout
+	output      [63:0]  SaveStateBus_Dout,
+	input               mapper_irq_pause
 );
 
 assign prg_aout_b   = enable ? prg_aout : 22'hZ;
@@ -931,7 +933,8 @@ module Mapper165(
 	inout [15:0] flags_out_b, // flags {0, 0, 0, 0, has_savestate, prg_conflict, prg_bus_write, has_chr_dout}
 	input [13:0] chr_ain_o,
 	input        m2_inv,
-	input        paused
+	input        paused,
+	input        mapper_irq_pause
 );
 
 assign prg_aout_b   = enable ? prg_aout : 22'hZ;
@@ -1018,7 +1021,7 @@ end else begin
 		a12_ctr <= (a12_ctr != 0) ? a12_ctr - 4'b0001 : a12_ctr;
 	end
 
-	if (~paused) begin
+	if (~paused && !mapper_irq_pause) begin
 		// Trigger IRQ counter on rising edge of chr_ain[12]
 
 		last_a12 <= chr_ain_o[12];
@@ -1113,7 +1116,8 @@ module Mapper413 (
 	input [13:0] chr_ain_o,
 	input        m2_inv,
 	input        paused,
-	output [2:0] prg_aoute    // Extended prg address out bits
+	output [2:0] prg_aoute,    // Extended prg address out bits
+	input        mapper_irq_pause
 );
 
 assign prg_aout_b   = enable ? prg_aout : 22'hZ;
@@ -1197,7 +1201,7 @@ end else begin
 		irq_reg[4:1] <= irq_reg[3:0]; // 1 cpu cycle delay ??? what is this for
 	end
 
-	if (~paused) begin
+	if (~paused && !mapper_irq_pause) begin
 		// Trigger IRQ counter on rising edge of chr_ain[12]
 
 		last_a12 <= chr_ain_o[12];

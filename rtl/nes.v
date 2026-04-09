@@ -95,6 +95,12 @@ module NES(
 	output  [1:0] diskside,
 
 	input   [4:0] audio_channels, // Enabled audio channels
+	output [15:0] sample_sq1,
+	output [15:0] sample_sq2,
+	output [15:0] sample_tri,
+	output [15:0] sample_noi,
+	output [15:0] sample_dmc,
+	output [15:0] sample_ext,
 	input         ex_sprites,
 	input   [1:0] mask,
 	input 		  dejitter_timing,
@@ -126,6 +132,7 @@ module NES(
 	output  [9:0] scanline,
 	input         int_audio,
 	input         ext_audio,
+	input         stereo_en,
 	input         smooth_audio,
 	output        apu_ce,
 	output        ppu_ce_out,
@@ -583,6 +590,11 @@ APU apu(
 	.DOUT           (apu_dout),
 	.audio_channels (audio_channels),
 	.Sample         (sample_apu),
+	.sample_sq1     (sample_sq1),
+	.sample_sq2     (sample_sq2),
+	.sample_tri     (sample_tri),
+	.sample_noi     (sample_noi),
+	.sample_dmc     (sample_dmc),
 	.DmaReq         (apu_dma_request),
 	.DmaAck         (apu_dma_ack),
 	.DmaAddr        (apu_dma_addr),
@@ -605,21 +617,13 @@ defparam apu.SSREG_INDEX_DMC1 = SSREG_INDEX_APU_DMC1;
 defparam apu.SSREG_INDEX_DMC2 = SSREG_INDEX_APU_DMC2;
 defparam apu.SSREG_INDEX_FCT  = SSREG_INDEX_APU_FCT;
 
-assign sample = sample_a;
-reg [15:0] sample_a;
+// Output raw APU audio directly to the top level mixer
+assign sample = sample_apu;
 
-always @* begin
-	case (audio_en)
-		0: sample_a = 16'd0;
-		1: sample_a = sample_ext;
-		2: sample_a = sample_inverted;
-		3: sample_a = sample_ext;
-	endcase
-end
-
-wire [15:0] sample_inverted = 16'hFFFF - sample_apu;
-wire [1:0] audio_en = {int_audio, ext_audio};
-wire [15:0] audio_mappers = (audio_en == 2'd1) ? 16'd0 : sample_inverted;
+// ALWAYS mute internal APU audio routing to cart expansion.
+// This forces the mappers to output PURE expansion audio on `sample_ext`,
+// allowing NES.sv to safely handle all scaling and mixing (Mono and Stereo) without clipping.
+wire [15:0] audio_mappers = 16'd0;
 
 
 // Joypads are mapped into the APU's range.
@@ -726,7 +730,6 @@ wire prg_allow, vram_a10, vram_ce, chr_allow;
 wire [24:0] prg_linaddr;
 wire [21:0] chr_linaddr;
 wire [7:0] prg_dout_mapper, chr_from_ppu_mapper;
-wire [15:0] sample_ext;
 wire has_chr_from_ppu_mapper, prg_bus_write, prg_conflict, prg_conflict_d0, has_flashsaves;
 
 assign save_written = has_flashsaves ? (!prg_linaddr[24] && prg_write && prg_allow) :                            // Flash save: writes to PRG-ROM
@@ -763,6 +766,7 @@ cart_top multi_mapper (
 	.audio             (sample_ext),              // Mixed audio output from cart
 	.mapper_irq_pause  (mapper_irq_pause),        // Pause cycle-based mappers during OC extended Vblank
 	.mapper_ce         (mapper_ce),               // Always runs at unoverclocked 1.78MHz
+	.put_ce            (put_ce),                  // Pass phase-aligned CE for expansion audio
 	.overclock         (overclock),               // OC mode for expansion audio pitch correction
 	.smooth_audio      (smooth_audio),            // Option toggle
 	// SDRAM Communication

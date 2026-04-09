@@ -965,6 +965,11 @@ module APU #(parameter [9:0] SSREG_INDEX_TOP, parameter [9:0] SSREG_INDEX_DMC1, 
 	input  logic        DmaAck,         // 1 when DMC byte is on DmcData. DmcDmaRequested should go low.
 	output logic  [7:0] DOUT,           // Data from APU
 	output logic [15:0] Sample,
+	output logic [15:0] sample_sq1,
+	output logic [15:0] sample_sq2,
+	output logic [15:0] sample_tri,
+	output logic [15:0] sample_noi,
+	output logic [15:0] sample_dmc,
 	output logic        DmaReq,         // 1 when DMC wants DMA
 	output logic [15:0] DmaAddr,        // Address DMC wants to read
 	output logic        IRQ,            // IRQ asserted high == asserted
@@ -1022,29 +1027,26 @@ module APU #(parameter [9:0] SSREG_INDEX_TOP, parameter [9:0] SSREG_INDEX_DMC1, 
 	// aclk2    -- Aligned with CPU phi2, also every other frame
 	// write    -- Happens on CPU phi2 (Not M2!). Most of these are latched by one of the above clocks.
 	// -----------------------------------------------------------------------
-	// Overclock Pitch Corrector
-	// To exactly correct pitch AND envelope timing, we must run the entire
-	// APU internal timing at 1x speed without dropping CPU writes.
-	// Since CPU writes depend on the `write` signal (not ce or aclk1), we 
-	// can simply divide the main internal clocks. 
-	// To avoid phasing bugs, pitch_cnt ONLY advances once per full CPU cycle 
-	// (i.e. at the end of the `put` cycle).
 	// -----------------------------------------------------------------------
-	reg [1:0] pitch_cnt = 0;
-	always_ff @(posedge clk) begin
-		if (ce & ~get_or_put) begin
-			if (overclock == 2'd2)
-				pitch_cnt <= (pitch_cnt == 2'd2) ? 2'd0 : pitch_cnt + 2'd1; // Modulo 3 for Medium 1.5x
-			else
-				pitch_cnt <= pitch_cnt + 2'd1; // Modulo 4
-		end
+	// Overclock Pitch Corrector (Synchronized with Mappers)
+	// Frequency dividers must tick at 1.78MHz rate to preserve correct pitch.
+	// This logic skips cycles of the overclocked `ce` to maintain 1x speed.
+	// -----------------------------------------------------------------------
+	logic [1:0] pitch_cnt;
+	// Only advance pitch_cnt on the 'put' cycle to prevent unpairing aclk1 and aclk1_delayed
+	always @(posedge clk) if (ce & ~get_or_put) begin
+		case (overclock)
+			2'd1:    pitch_cnt <= (pitch_cnt == 2'd3) ? 2'd0 : pitch_cnt + 2'd1; // 1.33x -> skip 1 of 4 (3/4 rate)
+			2'd2:    pitch_cnt <= (pitch_cnt == 2'd2) ? 2'd0 : pitch_cnt + 2'd1; // 1.50x -> skip 1 of 3 (2/3 rate)
+			2'd3:    pitch_cnt <= (pitch_cnt == 2'd1) ? 2'd0 : pitch_cnt + 2'd1; // 2.00x -> skip 1 of 2 (1/2 rate)
+			default: pitch_cnt <= 2'd0;
+		endcase
 	end
 
-	wire pitch_ce =
-		(overclock == 2'd1) ? (pitch_cnt != 2'd3)    : // Turbo (1.33x)  : enable 3/4 ticks
-		(overclock == 2'd2) ? (pitch_cnt != 2'd2)    : // Medium (1.50x) : enable 2/3 ticks
-		(overclock == 2'd3) ? (pitch_cnt[0] == 1'b0) : // Extreme (2.00x): enable 1/2 ticks
-		1'b1;                                          // Off: all ticks enabled
+	wire pitch_ce = (overclock == 2'd1) ? (pitch_cnt != 2'd3) :
+	                (overclock == 2'd2) ? (pitch_cnt != 2'd2) :
+	                (overclock == 2'd3) ? (pitch_cnt == 2'd0) :
+	                1'b1;
 
 	logic aclk1, aclk2, aclk1_delayed, phi1;
 	assign aclk1         = ce & get_or_put & pitch_ce;
@@ -1235,7 +1237,12 @@ module APU #(parameter [9:0] SSREG_INDEX_TOP, parameter [9:0] SSREG_INDEX_DMC1, 
 		.dmc          (DmcSample),
 		.smooth_audio (smooth_audio),
 		.audio_channels(audio_channels),
-		.sample       (Sample)
+		.sample       (Sample),
+		.sample_sq1   (sample_sq1),
+		.sample_sq2   (sample_sq2),
+		.sample_tri   (sample_tri),
+		.sample_noi   (sample_noi),
+		.sample_dmc   (sample_dmc)
 	);
 
 	FrameCtr frame_counter (
@@ -1281,7 +1288,12 @@ module APUMixer (
 	input  logic  [6:0]  dmc,
 	input  logic         smooth_audio,
 	input  logic  [4:0]  audio_channels,
-	output logic  [15:0] sample
+	output logic  [15:0] sample,
+	output logic  [15:0] sample_sq1,
+	output logic  [15:0] sample_sq2,
+	output logic  [15:0] sample_tri,
+	output logic  [15:0] sample_noi,
+	output logic  [15:0] sample_dmc
 );
 
 logic [15:0] pulse_lut[32];
@@ -1392,25 +1404,40 @@ wire [11:0] t_m = triangle & {12{audio_channels[2]}};
 wire [3:0] n_m = noise   & {4{audio_channels[3]}};
 wire [6:0] d_m = dmc     & {7{audio_channels[4]}};
 
-wire [4:0] squares = s1_m + s2_m;
-wire [15:0] ch1 = pulse_lut[squares];
+// Individual channel outputs for stereo mixing
+assign sample_sq1 = pulse_lut[{s1_m, 1'b0}];
+assign sample_sq2 = pulse_lut[{s2_m, 1'b0}];
 
-// Base path matching original 4-bit output
-// tri_lut mapped the linear 4-bit triangle directly to a 6-bit output linearly (*4).
-wire [8:0] mix_reg = {t_m[11:8], 2'b00} + noise_lut[n_m] + dmc_lut[d_m];
-wire [15:0] ch2_reg = mix_lut[mix_reg];
-
-// Linear interpolation to smoothly transition between the LUT intervals using 12-bit precision
-wire [8:0] mix_base = t_m[11:6] + noise_lut[n_m] + dmc_lut[d_m];
-wire [15:0] val_base = mix_lut[mix_base];
-wire [15:0] val_next = mix_lut[mix_base + 1'b1];
-
+// Triangle individual output with Smooth Audio
 wire [5:0] tri_frac = t_m[5:0];
-wire [15:0] ch2_smooth = val_base + (((val_next - val_base) * {10'd0, tri_frac}) >> 6);
+wire [8:0] tri_reg_idx  = {t_m[11:8], 2'b00};
+wire [8:0] tri_base_idx = t_m[11:6];
+wire [8:0] tri_next_idx = t_m[11:6] + 9'd1;
+wire [8:0] noi_idx      = {3'd0, noise_lut[n_m]};
+wire [8:0] dmc_idx      = {1'b0, dmc_lut[d_m]};
 
-// Toggle between standard and 12-bit smoothed
-wire [15:0] ch2 = smooth_audio ? ch2_smooth : ch2_reg;
+wire [15:0] tri_reg    = mix_lut[tri_reg_idx];
+wire [15:0] tri_base   = mix_lut[tri_base_idx];
+wire [15:0] tri_next   = mix_lut[tri_next_idx];
+wire [15:0] tri_smooth = tri_base + (((tri_next - tri_base) * {10'd0, tri_frac}) >> 6);
+assign sample_tri = smooth_audio ? tri_smooth : tri_reg;
 
-assign sample = ch1 + ch2;
+assign sample_noi = mix_lut[noi_idx];
+assign sample_dmc = mix_lut[dmc_idx];
 
+// Hardware-accurate non-linear mono mix with Smooth Audio
+// Standard NES APU formula: pulse_out + tri_noi_dmc_out
+wire [4:0] sq_sum = s1_m + s2_m;
+
+// Calculate base index and bounds
+wire [8:0] mix_base = (t_m[11:6] * 2'd3) + {3'd0, noise_lut[n_m]} + {1'b0, dmc_lut[d_m]};
+wire [15:0] val_base = mix_lut[mix_base];
+wire [15:0] val_next = mix_lut[mix_base + 9'd3]; // +3 offsets the (* 2'd3) triangle multiplier
+
+// Interpolate the non-linear LUT using the fractional triangle bits
+// tri_frac is exactly t_m[5:0] (defined earlier in the module)
+wire [15:0] tnd_smooth = val_base + (((val_next - val_base) * {10'd0, tri_frac}) >> 6);
+wire [15:0] tnd_out = smooth_audio ? tnd_smooth : val_base;
+
+assign sample = pulse_lut[sq_sum] + tnd_out;
 endmodule

@@ -164,8 +164,8 @@ assign ADC_BUS  = 'Z;
 
 assign AUDIO_S   = 0;
 
-assign AUDIO_L   = sample;
-assign AUDIO_R   = AUDIO_L;
+assign AUDIO_L   = audio_l_final;
+assign AUDIO_R   = audio_r_final;
 assign AUDIO_MIX = 0;
 
 assign LED_USER  = downloading | (loader_fail & led_blink) | (bk_state != S_IDLE) | (bk_pending & ~status[50]);
@@ -256,6 +256,7 @@ parameter CONF_STR = {
 	"P1OP,Extra Sprites,Off,On;",
 	"P1-;",
 	"P1OUV,Audio Enable,Both,Internal,Cart Expansion,None;",
+	"P1O[74],Stereo,Off,On;",
 	"P1O[73],Smooth Audio,Off,On;",
 	"P2,Input Options;",
 	"P2-;",
@@ -569,14 +570,67 @@ wire [15:0] sample;
 // OC Audio Pitch Correction
 // When overclocked the APU runs faster, raising all audio pitch.
 
-
-
 wire  [5:0] color;
 wire  [2:0] joypad_out;
 wire  [1:0] joypad_clock;
 reg  [23:0] joypad_bits, joypad_bits2;
 reg   [7:0] joypad_d3, joypad_d4;
 reg   [1:0] last_joypad_clock;
+
+wire [15:0] sample_sq1, sample_sq2, sample_tri, sample_noi, sample_dmc, sample_ext;
+wire [15:0] audio_l_pre, audio_r_pre, audio_l_stretched, audio_r_stretched;
+wire stereo_en = status[74];
+
+// sample_ext now contains PURE expansion audio (APU is muted to the cart)
+wire [15:0] exp_only = ext_audio ? sample_ext : 16'h0;
+
+// Stereo Mix
+wire [16:0] apu_l_sum = int_audio ? (
+                        ({1'b0, sample_sq1} >> 1) + ({1'b0, sample_sq1} >> 3) + ({1'b0, sample_sq1} >> 5) +
+                        ({1'b0, sample_tri} >> 1) + ({1'b0, sample_tri} >> 3) + ({1'b0, sample_tri} >> 5) +
+                        ({1'b0, sample_dmc} >> 1) + ({1'b0, sample_dmc} >> 3) + ({1'b0, sample_dmc} >> 5)
+                        ) : 17'd0;
+                        
+wire [16:0] apu_r_sum = int_audio ? (
+                        ({1'b0, sample_sq2} >> 1) + ({1'b0, sample_sq2} >> 3) + ({1'b0, sample_sq2} >> 5) +
+                        ({1'b0, sample_noi} >> 1) + ({1'b0, sample_noi} >> 3) + ({1'b0, sample_noi} >> 5) +
+                        ({1'b0, sample_dmc} >> 1) + ({1'b0, sample_dmc} >> 3) + ({1'b0, sample_dmc} >> 5)
+                        ) : 17'd0;
+
+// Mono Mix
+// Shift APU sample right by 1 to halve the volume.
+wire [16:0] apu_mono_sum = int_audio ? ({1'b0, sample} >> 1) : 17'd0;
+
+// Combine channels and add a safe DC offset (17'h02000) to keep the resting signal 
+// entirely off the extreme negative DAC rail, eliminating start/stop popping and wrap-around clipping.
+wire [16:0] left_mix  = apu_l_sum    + {1'b0, exp_only} + 17'h02000;
+wire [16:0] right_mix = apu_r_sum    + {1'b0, exp_only} + 17'h02000;
+wire [16:0] mono_mix  = apu_mono_sum + {1'b0, exp_only} + 17'h02000;
+
+// Apply saturation to prevent integer wrapping/screeching on extreme volume peaks
+assign audio_l_pre = stereo_en ? (left_mix[16]  ? 16'hFFFF : left_mix[15:0])  : (mono_mix[16] ? 16'hFFFF : mono_mix[15:0]);
+assign audio_r_pre = stereo_en ? (right_mix[16] ? 16'hFFFF : right_mix[15:0]) : (mono_mix[16] ? 16'hFFFF : mono_mix[15:0]);
+
+// Audio Stretching (Set to 1.0x as pitch is now corrected internally in APU/Mappers)
+audio_stretch stretch_l (
+	.clk(clk),
+	.sample_ce(apu_ce),
+	.sample_in(audio_l_pre),
+	.overclock(2'd0),
+	.sample_out(audio_l_stretched)
+);
+
+audio_stretch stretch_r (
+	.clk(clk),
+	.sample_ce(apu_ce),
+	.sample_in(audio_r_pre),
+	.overclock(2'd0),
+	.sample_out(audio_r_stretched)
+);
+
+// Final outputs
+wire [15:0] audio_l_final = audio_l_stretched;
+wire [15:0] audio_r_final = audio_r_stretched;
 
 wire [11:0] powerpad = joyA[22:11] | joyB[22:11] | joyC[22:11] | joyD[22:11];
 
@@ -910,9 +964,16 @@ NES nes (
 	.gg_avail        (gg_avail),
 	// Audio
 	.sample          (sample),
+	.sample_sq1      (sample_sq1),
+	.sample_sq2      (sample_sq2),
+	.sample_tri      (sample_tri),
+	.sample_noi      (sample_noi),
+	.sample_dmc      (sample_dmc),
+	.sample_ext      (sample_ext),
 	.audio_channels  (5'b11111),
 	.int_audio       (int_audio),
 	.ext_audio       (ext_audio),
+	.stereo_en       (stereo_en),
 	.smooth_audio    (status[73]), // Use bit 73 for smoothing
 	.apu_ce          (apu_ce),
 	// Video
