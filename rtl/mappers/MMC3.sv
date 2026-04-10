@@ -413,6 +413,7 @@ wire mapper268 = ({flags[20:17],flags[7:0]} == 268); // Coolboy/Mindkids; Note: 
 wire mapper268_5k = (flags[24:21] == 1);
 wire mapper45 = (flags[7:0] == 45);    // Super 1000000-in-1 multicart
 wire mapper52 = (flags[7:0] == 52);    // Mario Party 7-in-1 multicart
+wire mapper552 = ({flags[18:17], flags[7:0]} == 552); // Taito X1-017 "Corrected"
 wire oversized = mapper268 || mapper45 || mapper52 || (flags[10:9] == 3); // If prg size in header is >= 1MB (prg_size==6 or 7) must be some way to access it. Allow oversize mmc3
 wire gnrom;
 wire lockout;
@@ -427,11 +428,11 @@ reg [3:0] mapper189_prgsel;
 wire [7:0] new_counter = (counter == 0 || irq_reload) ? irq_latch : counter - 1'd1;
 reg [3:0] a12_ctr;
 wire irq_support = !DxROM && !mapper33 && !mapper95 && !mapper88 && !mapper154 && !mapper76
-	&& !mapper80 && !mapper82 && !mapper207 && !mapper112; //82,207 not needed
+	&& !mapper80 && !mapper82 && !mapper207 && !mapper112 && !mapper552; //82,207,552 not needed
 wire prg_invert_support = (irq_support && !mapper48);
-wire chr_invert_support = (irq_support && !mapper48) || mapper82;
-wire regs_7e = mapper80 || mapper82 || mapper207;
-wire internal_128 = mapper80 || mapper207;
+wire chr_invert_support = (irq_support && !mapper48) || mapper82 || mapper552;
+wire regs_7e = mapper80 || mapper82 || mapper207 || mapper552;
+wire internal_128 = mapper80 || mapper207 || mapper552;
 wire prg_reg_odd = (~mapper196) ? prg_ain[0] : ( |prg_ain[3:2] | (prg_ain[1] & ~prg_ain[14]) );
 wire [3:0] prota = (m268_reg[4][6] ^ m268_reg[4][3]) ? {m268_reg[4][1:0],m268_reg[4][4],m268_reg[4][7]} : 4'hF; // m208 4'hF = 0x59
 wire [3:0] prot = (m268_reg[4][3]) ? ~prota : prota;
@@ -583,9 +584,24 @@ end else begin
 				5'b0111_1: {ram_enable[0], ram_protect[0]} <= {(prg_din==8'hCA),!(prg_din==8'hCA)};  // Enable RAM at $6000-$67FF
 				5'b1000_1: {ram_enable[1], ram_protect[1]} <= {(prg_din==8'h69),!(prg_din==8'h69)};  // Enable RAM at $6F00-$6FFF
 				5'b1001_1: {ram_enable[2], ram_protect[2]} <= {(prg_din==8'h84),!(prg_din==8'h84)};  // Enable RAM at $7000-$73FF  //Using 6K; Require 5K instead?
-				5'b101?_0: prg_bank_0[5:0] <= prg_din[5:0];  // Select 8 KB PRG ROM bank at $8000-$9FFF
-				5'b110?_0: prg_bank_1[5:0] <= prg_din[5:0];  // Select 8 KB PRG ROM bank at $A000-$BFFF
-				5'b111?_0: prg_bank_2[5:0] <= prg_din[5:0];  // Select 8 KB PRG ROM bank at $C000-$DFFF
+				5'b101?_0: begin
+					if (mapper552)
+						prg_bank_0[5:0] <= {prg_din[0], prg_din[1], prg_din[2], prg_din[3], prg_din[4], prg_din[5]};
+					else
+						prg_bank_0[5:0] <= prg_din[5:0];  // Select 8 KB PRG ROM bank at $8000-$9FFF
+					end
+				5'b110?_0: begin
+					if (mapper552)
+						prg_bank_1[5:0] <= {prg_din[0], prg_din[1], prg_din[2], prg_din[3], prg_din[4], prg_din[5]};
+					else
+						prg_bank_1[5:0] <= prg_din[5:0];  // Select 8 KB PRG ROM bank at $A000-$BFFF
+					end
+				5'b111?_0: begin
+					if (mapper552)
+						prg_bank_2[5:0] <= {prg_din[0], prg_din[1], prg_din[2], prg_din[3], prg_din[4], prg_din[5]};
+					else
+						prg_bank_2[5:0] <= prg_din[5:0];  // Select 8 KB PRG ROM bank at $C000-$DFFF
+					end
 				5'b1010_1: prg_bank_0[5:0] <= prg_din[7:2];  // Select 8 KB PRG ROM bank at $8000-$9FFF
 				5'b1011_1: prg_bank_1[5:0] <= prg_din[7:2];  // Select 8 KB PRG ROM bank at $A000-$BFFF
 				5'b1100_1: prg_bank_2[5:0] <= prg_din[7:2];  // Select 8 KB PRG ROM bank at $C000-$DFFF

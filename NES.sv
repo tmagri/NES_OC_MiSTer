@@ -597,7 +597,7 @@ wire [16:0] apu_r_stereo = (
 	({1'b0, sample_dmc} >> 1) + ({1'b0, sample_dmc} >> 3) + ({1'b0, sample_dmc} >> 5)
 );
 
-wire [16:0] apu_mono_downmix = (({1'b0, apu_l_stereo} + {1'b0, apu_r_stereo}) >> 1);
+wire [16:0] apu_mono_downmix = 17'(({1'b0, apu_l_stereo} + {1'b0, apu_r_stereo}) >> 1);
 
 wire [16:0] apu_l_sum = int_audio ? (stereo_en ? apu_l_stereo : apu_mono_downmix) : 17'd0;
 wire [16:0] apu_r_sum = int_audio ? (stereo_en ? apu_r_stereo : apu_mono_downmix) : 17'd0;
