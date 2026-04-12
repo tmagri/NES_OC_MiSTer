@@ -480,6 +480,7 @@ module OAMEval(
 	output reg overflow,   // Set to true if we had more than 8 objects on a scan line. Reset when exiting vblank.
 	output reg sprite0,        // True if sprite#0 is included on the scan line currently being painted.
 	input is_vbe,              // Last line before pre-render
+	input disable_oam_corruption,
 	input PAL,
 	output in_range,
 	output masked_sprites,     // If the game is trying to mask extra sprites
@@ -646,7 +647,7 @@ end else if (ce) begin
 	old_rendering <= rendering;
 	old_using_secondary <= using_secondary;
 
-	if (((old_rendering != rendering) || corrupting_write) && ~PAL) begin
+	if (((old_rendering != rendering) || corrupting_write) && ~PAL && ~disable_oam_corruption) begin
 		if ((old_using_secondary != using_secondary) || corrupting_write) begin
 			oam[{oam_row_cur, 3'b000}] <= oam[{oam_row_last, 3'b000}];
 			oam[{oam_row_cur, 3'b001}] <= oam[{oam_row_last, 3'b001}];
@@ -1244,6 +1245,7 @@ module PPU(
 	input         rst_behavior,
 	input         ce,
 	input         debug_dots,
+	input         disable_oam_corruption,
 	input         reset,            // input clock  21.48 MHz / 4. 1 clock cycle = 1 pixel
 	input         cold_reset,       // power cycle
 	inout   [1:0] sys_type,         // System type. 0 = NTSC 1 = PAL 2 = Dendy 3 = Vs.
@@ -1480,6 +1482,7 @@ wire masked_sprites;
 OAMEval spriteeval (
 	.clk               (clk),
 	.ce                (ce),
+	.disable_oam_corruption(disable_oam_corruption),
 	.reset             (reset),
 	.end_of_line       (end_of_line),
 	.rendering_enabled (rendering_enabled),

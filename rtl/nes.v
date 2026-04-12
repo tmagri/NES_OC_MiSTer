@@ -144,6 +144,7 @@ module NES(
 	output        save_written,
 	output        mapper_has_flashsaves,
 	input         debug_dots,
+	input         disable_oam_corruption,
 
 	// savestates
 	output        mapper_has_savestate,
@@ -692,6 +693,7 @@ PPU ppu(
 	.reset            (reset),
 	.sys_type         (sys_type),
 	.debug_dots       (debug_dots),
+	.disable_oam_corruption(disable_oam_corruption),
 	.color            (color),
 	.din              (dbus),
 	.dout             (ppu_dout),
