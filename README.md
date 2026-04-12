@@ -1,6 +1,6 @@
 # [**Nintendo Entertainment System**](https://en.wikipedia.org/wiki/Nintendo_Entertainment_System) **for [MiSTer Platform](https://github.com/MiSTer-devel/Main_MiSTer/wiki)**
 
-**⚠️ Fork Notice:** Due to the experimental OC (Overclocking) feature, this is maintained as a separate fork due to instability. You may experience issues where reloading a ROM or numerous resets of the console are required to get the OC going. **Using savestates will also have issues.** Enjoy\! A huge thank you to the original NES\_MiSTer devs as well.
+**⚠️ Fork Notice:** Due to the OC (Overclocking) feature, this is maintained as a separate fork due to potential instability. You may experience issues where reloading a ROM or numerous resets of the console are required to get the OC going. **Using savestates may also have issues.** Enjoy\! A huge thank you to the original NES\_MiSTer devs as well.
 
 This is an FPGA implementation of the NES/Famicom based on [FPGANES](https://github.com/strigeus/fpganes) by Ludvig Strigeus and ported to MiSTer.
 
@@ -16,7 +16,7 @@ A new overclocking method that improves compatibility and stability across the N
 * More stable than previous OC methods and enabled by default for better out‑of‑the‑box performance.  
 * **Note:** Some games like *Parodius* and *Castlevania III \[J\]* work better with **VBlank** overclocking rather than **Postrender**. **Postrender** works best with *Kirby's Adventure* and *Battletoads*. "Extreme" 100% mode is not recommended for most games. Medium (1.50x) is recommended for most.
 
-### **NES Overclocking 2.0 & VBlank Extension**
+### **NES Overclocking & VBlank Extension**
 
 * **VBlank Extension (up to 100% OC):** A CPU-only overclocking method that utilizes VBlank extension to increase CPU frequency by up to 100% while maintaining standard 60fps video and cycle-accurate audio. It uses a dedicated 1.78MHz mapper clock for proper cycle synchronization to preserve compatibility with complex mappers.  
 * **Medium (1.50×) Mode:** A stable intermediate performance boost using dynamic PPU clocking and anti-jitter logic. Ideal for most games.  
@@ -29,7 +29,7 @@ True Stereo Sound implemented with high-quality separation (enable "Stereo Mix" 
 * **Left Channel:** Pulse 1, Triangle, and DMC.  
 * **Right Channel:** Pulse 2, Noise, and DMC.  
 * **Unified Mixing Logic:** Fixed "loud and clipping" audio in Mono mode by implementing a unified internal downmixing pipeline. Mono and Stereo now share the same gain structure and expansion audio balance.  
-* **Smooth Audio (Pure Triangle/Sawtooth):** An optional audio‑interpolation system that smooths the NES’s stepped triangle and sawtooth‑like waveforms. It reduces digital harshness, aliasing, and stair‑step artifacts—especially noticeable when overclocking—while preserving accurate pitch and timing.
+* **Smooth Audio (Pure Triangle/Sawtooth):** An optional audio‑interpolation system that smooths the NES’s stepped triangle and sawtooth‑like waveforms. It reduces digital harshness, aliasing, and stair‑step artifacts—especially noticeable when overclocking—while preserving accurate pitch and timing. The reduced bass may affect nostalgia or fondness for the original NES sound for some users.
 
 ### **Epileptic‑Friendly Filter (Temporal Frame Blending)**
 
@@ -44,6 +44,12 @@ A new optional accessibility feature designed to reduce rapid flashing sequences
 
 * **VRC Mapper IRQ Pause:** Implemented a new mechanism to gate cycle-based IRQ counters during the extended VBlank periods used in overclocking. This resolves graphical tearing and split-screen shaking in *Castlevania III (Akumajou Densetsu)* and other VRC-based titles.  
 * **Sync Improvements:** Decoupled timing-sensitive mapper logic from the CPU clock to ensure stable IRQ firing regardless of the overclocking percentage.  
+
+### **Advanced Compatibility Hacks (OSD)**
+
+Added new toggles in the Advanced menu to support modern ROM hacks under accurate hardware conditions:
+
+* **OAM Corruption:** Disables accurate PPU OAM corruption/decay when rendering is disabled mid-screen. This is required for some ROM hacks, such as the *Legend of Zelda Redux*, which can freeze during screen transitions due to accidental OAM scrambling. Set to "Disabled" to play these hacks.
 
 ## **Features**
 
@@ -127,7 +133,7 @@ The Miracle Piano is a MIDI keyboard compatible with the Miracle Piano Education
 |~~224~~|**225**|~~226~~|227|228|~~229~~|~~230~~|~~231~~|**232**|~~233~~|234|~~235~~|~~236~~|~~237~~|||
 |~~240~~|~~241~~|~~242~~|**243**|~~244~~|~~245~~|246||~~248~~|~~249~~|~~250~~|~~251~~|~~252~~||~~254~~|255|
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-|**268**|413|**547**|---|---|---|---|---|---|---|---|---|---|---|---|---|
+|**268**|413|**547**|**552**|---|---|---|---|---|---|---|---|---|---|---|---|
 
 Key: **Supported+Save state**, Supported, ~~Not Supported~~. Mappers that are not existent or not useful are blank.
 
