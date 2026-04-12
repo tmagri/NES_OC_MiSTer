@@ -6,7 +6,7 @@ This is an FPGA implementation of the NES/Famicom based on [FPGANES](https://git
 
 ## **Fork Features & Updates**
 
-### **Postrender Overclock (OC) — Now the Default Mode**
+### **Postrender Overclock (OC) — The Default Mode**
 
 A new overclocking method that improves compatibility and stability across the NES library.
 
@@ -19,7 +19,7 @@ A new overclocking method that improves compatibility and stability across the N
 ### **NES Overclocking 2.0 & VBlank Extension**
 
 * **VBlank Extension (up to 100% OC):** A CPU-only overclocking method that utilizes VBlank extension to increase CPU frequency by up to 100% while maintaining standard 60fps video and cycle-accurate audio. It uses a dedicated 1.78MHz mapper clock for proper cycle synchronization to preserve compatibility with complex mappers.  
-* **Medium (1.50×) Mode:** A stable intermediate performance boost using dynamic PPU clocking and anti-jitter logic. Ideal for games that don’t require full “Extreme” speed.  
+* **Medium (1.50×) Mode:** A stable intermediate performance boost using dynamic PPU clocking and anti-jitter logic. Ideal for most games.  
 * **APU Pitch Correction:** Dynamically scales expansion audio. Ensures that mappers with internal sound hardware (like VRC6/VRC7) maintain their original pitch and timing during overclocked gameplay.
 
 ### **High-Fidelity Stereo Audio Overhaul**
@@ -44,7 +44,6 @@ A new optional accessibility feature designed to reduce rapid flashing sequences
 
 * **VRC Mapper IRQ Pause:** Implemented a new mechanism to gate cycle-based IRQ counters during the extended VBlank periods used in overclocking. This resolves graphical tearing and split-screen shaking in *Castlevania III (Akumajou Densetsu)* and other VRC-based titles.  
 * **Sync Improvements:** Decoupled timing-sensitive mapper logic from the CPU clock to ensure stable IRQ firing regardless of the overclocking percentage.  
-* **Core Cleanup:** Systematic removal of legacy isolation\_mode logic to streamline signal routing and improve timing closure.
 
 ## **Features**
 

@@ -242,7 +242,7 @@ reg odd_or_even = 1; // 1 == odd, 0 == even
 // +33% or +100% more cycles per frame, completely eliminating game slowdown.
 // All bus timing signals (cart_ce, cart_pre, phi2) scale with div_cpu_n.
 // -----------------------------------------------------------------------
-wire loader_done = (|mapper_flags);
+
 
 // Latch OC level at reset so dividers never change mid-frame.
 reg [4:0] div_cpu_n = 5'd12;
@@ -252,9 +252,9 @@ reg [1:0] overclock_latched = 2'd0;
 
 always @(posedge clk) begin
 	if (reset_nes) begin
-		overclock_latched <= loader_done ? overclock : 2'd0;
-		is_medium_oc <= (loader_done && overclock == 2'd2);
-		case (loader_done ? overclock : 2'd0)
+		overclock_latched <= overclock;
+		is_medium_oc <= (overclock == 2'd2);
+		case (overclock)
 			2'd1:    begin div_cpu_n <= 5'd9;  div_ppu_n_base <= 3'd3; end  // Turbo   1.33x (÷9/÷3)
 			2'd2:    begin div_cpu_n <= 5'd8;  div_ppu_n_base <= 3'd3; end  // Medium  1.50x (dynamic 3-3-2)
 			2'd3:    begin div_cpu_n <= 5'd6;  div_ppu_n_base <= 3'd2; end  // Extreme 2.00x (÷6/÷2)
@@ -352,6 +352,8 @@ wire       is_in_vblank_paused;
 wire       evenframe;
 wire       evenframe_paused;
 
+reg        reset_nes_last;
+
 assign corepaused = corepause_active;
 assign refresh    = corepause_active_delay && ppu_ce_pause;
 
@@ -367,7 +369,7 @@ always @(posedge clk) begin
 		freeze_clocks  <= 0;
 		faux_pixel_cnt <= 0;
 	end
-	if (cpu_ce) hold_reset <= 0;
+	if (cpu_ce && !reset_nes) hold_reset <= 0;
 	if (~freeze_clocks | ~(div_ppu == (div_ppu_n - 1'b1))) begin
 		if (~skip_ppu_cycle) begin
 			div_cpu <= cpu_ce || (ppu_ce && div_cpu > div_cpu_n) ? 5'd1 : div_cpu + 5'd1;
@@ -413,13 +415,15 @@ always @(posedge clk) begin
 		bootvector_flag <= 0;
 	end
 
-	// Realign if the system type changes.
+	// Realign if the system type changes or reset just finished.
 	last_sys_type <= sys_type;
-	if (last_sys_type != sys_type) begin
+	reset_nes_last <= reset_nes;
+	if ((last_sys_type != sys_type) || (reset_nes_last && !reset_nes)) begin
 		div_cpu <= 5'd1;
 		div_native_cpu <= 5'd1;
 		div_ppu <= 3'd1;
 		div_sys <= 0;
+		ppu_tick <= 0;
 		cpu_tick_count <= 0;
 	end
 
