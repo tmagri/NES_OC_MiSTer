@@ -271,15 +271,15 @@ generate
 		assign SS_CLKGEN_BACK[  8:0] = cycle;
 		assign SS_CLKGEN_BACK[    9] = is_in_vblank;
 		assign SS_CLKGEN_BACK[13:10] = rendering_sr;
-		assign SS_CLKGEN_BACK[22:14] = scanline[8:0]; // bit 9 only set in OC extra-blank region
-		assign SS_CLKGEN_BACK[   23] = is_pre_render;
-		assign SS_CLKGEN_BACK[   24] = is_even_frame;
-		assign SS_CLKGEN_BACK[   25] = skip_next;
-		assign SS_CLKGEN_BACK[   26] = vblank;
-		assign SS_CLKGEN_BACK[   27] = hblank;
-		assign SS_CLKGEN_BACK[   28] = vsync;
-		assign SS_CLKGEN_BACK[   29] = hsync;
-		assign SS_CLKGEN_BACK[63:30] = 34'b0; // free to be used
+		assign SS_CLKGEN_BACK[23:14] = scanline[9:0]; // full 10-bit scanline including OC region
+		assign SS_CLKGEN_BACK[   24] = is_pre_render;
+		assign SS_CLKGEN_BACK[   25] = is_even_frame;
+		assign SS_CLKGEN_BACK[   26] = skip_next;
+		assign SS_CLKGEN_BACK[   27] = vblank;
+		assign SS_CLKGEN_BACK[   28] = hblank;
+		assign SS_CLKGEN_BACK[   29] = vsync;
+		assign SS_CLKGEN_BACK[   30] = hsync;
+		assign SS_CLKGEN_BACK[63:31] = 33'b0; // free to be used
 	end else begin
 		assign SS_CLKGEN         = 64'b0;
 		assign SaveStateBus_Dout = SS_CLKGEN;
@@ -297,11 +297,11 @@ always @(posedge clk) if (reset) begin
 		cycle        <= SS_CLKGEN[  8:0]; // 338;
 		is_in_vblank <= SS_CLKGEN[    9]; // 0;
 		rendering_sr <= SS_CLKGEN[13:10]; // no reset before => 0 should be ok;
-		skip_next    <= SS_CLKGEN[   25]; // 0;
-		vblank       <= SS_CLKGEN[   26]; // 0;
-		hblank       <= SS_CLKGEN[   27]; // 0;
-		vsync        <= SS_CLKGEN[   28]; // 0;
-		hsync        <= SS_CLKGEN[   29]; // 0;
+		skip_next    <= SS_CLKGEN[   26]; // 0;
+		vblank       <= SS_CLKGEN[   27]; // 0;
+		hblank       <= SS_CLKGEN[   28]; // 0;
+		vsync        <= SS_CLKGEN[   29]; // 0;
+		hsync        <= SS_CLKGEN[   30]; // 0;
 	end else begin
 		cycle        <= 0;
 		is_in_vblank <= 0;
@@ -336,9 +336,9 @@ end
 
 always @(posedge clk) if (reset) begin
 	if (USE_SAVESTATE) begin
-		scanline      <= {1'b0, SS_CLKGEN[22:14]}; // restore 9-bit, bit 9 = 0
-		is_pre_render     <= SS_CLKGEN[   23]; // 0;
-		is_even_frame      <= SS_CLKGEN[   24]; // 0; // Resets to 0, the first frame will always end with 341 pixels.
+		scanline      <= SS_CLKGEN[23:14]; // restore full 10-bit scanline including OC region
+		is_pre_render     <= SS_CLKGEN[   24]; // 0;
+		is_even_frame      <= SS_CLKGEN[   25]; // 0; // Resets to 0, the first frame will always end with 341 pixels.
 	end else begin
 		scanline          <= 0;
 		is_pre_render     <= 0;

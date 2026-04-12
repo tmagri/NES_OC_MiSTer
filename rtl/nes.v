@@ -248,9 +248,11 @@ wire loader_done = (|mapper_flags);
 reg [4:0] div_cpu_n = 5'd12;
 reg [2:0] div_ppu_n_base = 3'd4;
 reg is_medium_oc = 1'b0;
+reg [1:0] overclock_latched = 2'd0;
 
 always @(posedge clk) begin
 	if (reset_nes) begin
+		overclock_latched <= loader_done ? overclock : 2'd0;
 		is_medium_oc <= (loader_done && overclock == 2'd2);
 		case (loader_done ? overclock : 2'd0)
 			2'd1:    begin div_cpu_n <= 5'd9;  div_ppu_n_base <= 3'd3; end  // Turbo   1.33x (÷9/÷3)
@@ -278,10 +280,10 @@ reg [1:0] div_sys = 2'd0;
 wire cpu_ce  = (div_cpu == div_cpu_n);
 wire ppu_ce  = (div_ppu == div_ppu_n);
 assign ppu_ce_out = ppu_ce;
-wire cart_ce = (div_cpu == (overclock[1] ? div_cpu_n - 5'd1 : div_cpu_n - 5'd2)); // Late trigger for Medium/Extreme (Mode 2/3)
+wire cart_ce = (div_cpu == (overclock_latched[1] ? div_cpu_n - 5'd1 : div_cpu_n - 5'd2)); // Late trigger for Medium/Extreme (Mode 2/3)
 
 // Signals — all offsets relative to div_cpu_n so they scale with OC level
-wire cart_pre = (div_cpu >= div_cpu_n - 5'd6) && (div_cpu <= (overclock[1] ? div_cpu_n - 5'd1 : div_cpu_n - 5'd2));
+wire cart_pre = (div_cpu >= div_cpu_n - 5'd6) && (div_cpu <= (overclock_latched[1] ? div_cpu_n - 5'd1 : div_cpu_n - 5'd2));
 
 wire ppu_read  = (ppu_tick == 1);
 wire ppu_write = (ppu_tick == 1);
@@ -299,9 +301,9 @@ wire phi2 = (div_cpu > (div_cpu_n / 3)) && (div_cpu < div_cpu_n);
 // of a second to render.
 // -----------------------------------------------------------------------
 wire [9:0] oc_extra_lines = 
-	(overclock == 2'd1) ? ((sys_type == 2'b00) ? 10'd87  : 10'd104) : // Turbo   (1.33x PPU clock extension)
-	(overclock == 2'd2) ? ((sys_type == 2'b00) ? 10'd131 : 10'd156) : // Medium  (1.50x PPU clock extension)
-	(overclock == 2'd3) ? ((sys_type == 2'b00) ? 10'd262 : 10'd312) : // Extreme (2.00x PPU clock extension)
+	(overclock_latched == 2'd1) ? ((sys_type == 2'b00) ? 10'd87  : 10'd104) : // Turbo   (1.33x PPU clock extension)
+	(overclock_latched == 2'd2) ? ((sys_type == 2'b00) ? 10'd131 : 10'd156) : // Medium  (1.50x PPU clock extension)
+	(overclock_latched == 2'd3) ? ((sys_type == 2'b00) ? 10'd262 : 10'd312) : // Extreme (2.00x PPU clock extension)
 	10'd0;
 
 wire [9:0] max_native_sl = (sys_type == 2'b00) ? 10'd261 : 10'd311;
@@ -354,7 +356,17 @@ assign corepaused = corepause_active;
 assign refresh    = corepause_active_delay && ppu_ce_pause;
 
 always @(posedge clk) begin
-	if (reset_nes) hold_reset <= 1;
+	if (reset_nes) begin
+		hold_reset     <= 1;
+		div_cpu        <= 5'd1;
+		div_native_cpu <= 5'd1;
+		div_ppu        <= 3'd1;
+		div_sys        <= 0;
+		ppu_tick       <= 0;
+		cpu_tick_count <= 0;
+		freeze_clocks  <= 0;
+		faux_pixel_cnt <= 0;
+	end
 	if (cpu_ce) hold_reset <= 0;
 	if (~freeze_clocks | ~(div_ppu == (div_ppu_n - 1'b1))) begin
 		if (~skip_ppu_cycle) begin
