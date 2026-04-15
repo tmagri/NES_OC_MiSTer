@@ -1,6 +1,7 @@
-// MMC1 mapper chip. Maps prg or chr addresses into a linear address.
+// Mapper chip. Maps prg or chr addresses into a linear address.
 
-// If vram_ce is set, {vram_a10, chr_aout[9:0]} are used to access the NES internal VRAM instead.
+import regs_savestates::*;
+
 module MMC1(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk

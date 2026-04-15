@@ -1,6 +1,8 @@
 // Rewritten 6/4/2020 by Kitrinx
 // This code is GPLv3.
 
+import regs_savestates::*;
+
 module LenCounterUnit (
 	input  logic       clk,
 	input  logic       reset,
@@ -14,16 +16,21 @@ module LenCounterUnit (
 	input  logic       is_triangle,
 	input  logic       write,
 	input  logic       enabled,
-	output logic       lc_on
+	output logic       lc_on,
+	// Savestate linkage
+	input  logic [9:0] SS_IN,
+	output logic [9:0] SS_BACK
 );
 
-	always_ff @(posedge clk) begin : lenunit
-		logic [7:0] len_counter_int;
-		logic halt, halt_next;
-		logic [7:0] len_counter_next;
-		logic lc_on_1;
-		logic clear_next;
+	logic [7:0] len_counter_int;
+	logic halt;
+	logic [7:0] len_counter_next;
+	logic lc_on_1;
+	logic clear_next;
 
+	assign SS_BACK = {halt, lc_on, len_counter_int};
+
+	always_ff @(posedge clk) begin : lenunit
 		if (aclk1_d)
 			if (~enabled)
 				lc_on <= 0;
@@ -52,10 +59,10 @@ module LenCounterUnit (
 
 		if (reset) begin
 			if (~is_triangle || cold_reset) begin
-				halt <= 0;
+				halt <= SS_IN[9]; // 0;
 			end
-			lc_on <= 0;
-			len_counter_int <= 0;
+			lc_on           <= SS_IN[8]; // 0;
+			len_counter_int <= SS_IN[7:0]; // 0;
 			len_counter_next <= 0;
 		end
 	end
@@ -69,20 +76,22 @@ module EnvelopeUnit (
 	input  logic [5:0] din,
 	input  logic       addr,
 	input  logic       write,
-	output logic [3:0] envelope
+	output logic [3:0] envelope,
+	// Savestate linkage
+	input  logic [14:0] SS_IN,
+	output logic [14:0] SS_BACK
 );
 
 	logic [3:0] env_count, env_vol;
 	logic env_disabled;
+	logic [3:0] env_div;
+	logic env_reload;
+	logic env_loop;
 
 	assign envelope = env_disabled ? env_vol : env_count;
+	assign SS_BACK = {env_loop, env_disabled, env_vol, env_count, env_div, env_reload};
 
 	always_ff @(posedge clk) begin : envunit
-		logic [3:0] env_div;
-		logic env_reload;
-		logic env_loop;
-		logic env_reset;
-
 		if (env_clk) begin
 			if (~env_reload) begin
 				env_div <= env_div - 1'd1;
@@ -104,17 +113,18 @@ module EnvelopeUnit (
 		end
 
 		if (reset) begin
-			env_loop <= 0;
-			env_div <= 0;
-			env_vol <= 0;
-			env_count <= 0;
-			env_reload <= 0;
+			env_loop     <= SS_IN[14]; // 0;
+			env_disabled <= SS_IN[13]; // 0;
+			env_vol      <= SS_IN[12:9]; // 0;
+			env_count    <= SS_IN[8:5]; // 0;
+			env_div      <= SS_IN[4:1]; // 0;
+			env_reload   <= SS_IN[0]; // 0;
 		end
 	end
 
 endmodule
 
-module SquareChan (
+module SquareChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_SQ1) (
 	input  logic       MMC5,
 	input  logic       clk,
 	input  logic       ce,
@@ -133,8 +143,20 @@ module SquareChan (
 	input  logic       get_or_put,
 	input  logic       Enabled,
 	output logic [3:0] Sample,
-	output logic       IsNonZero
+	output logic       IsNonZero,
+	// savestates
+	input       [63:0]  SaveStateBus_Din,
+	input       [ 9:0]  SaveStateBus_Adr,
+	input               SaveStateBus_wren,
+	input               SaveStateBus_rst,
+	input               SaveStateBus_load,
+	output      [63:0]  SaveStateBus_Dout
 );
+
+	// Savestates
+	wire [63:0] SS;
+	wire [63:0] SS_BACK;
+	eReg_SavestateV #(SSREG_INDEX, 64'd0) iREG_SAVESTATE (clk, SaveStateBus_Din, SaveStateBus_Adr, SaveStateBus_wren, SaveStateBus_rst, SaveStateBus_Dout, SS_BACK, SS);
 
 	// Register 1
 	logic [1:0] Duty;
@@ -156,6 +178,14 @@ module SquareChan (
 	logic lc;
 	logic DutyEnabledUsed;
 	logic DutyEnabled;
+
+	wire [9:0] SS_LEN_BACK, SS_LEN_IN;
+	wire [14:0] SS_ENV_BACK, SS_ENV_IN;
+
+	assign SS_LEN_IN = SS[48:39];
+	assign SS_ENV_IN = SS[63:49];
+
+	assign SS_BACK = {SS_ENV_BACK, SS_LEN_BACK, SweepReset, SweepDivider, SeqPos, TimerCtr[10:0], Period, SweepShift, SweepNegate, SweepPeriod, SweepEnable, Duty};
 
 	assign DutyEnabledUsed = MMC5 ^ DutyEnabled;
 	assign ShiftedPeriod = (Period >> SweepShift);
@@ -180,7 +210,9 @@ module SquareChan (
 		.is_triangle    (1'b0),
 		.write          (subunit_write),
 		.enabled        (Enabled),
-		.lc_on          (lc)
+		.lc_on          (lc),
+		.SS_IN          (SS_LEN_IN),
+		.SS_BACK        (SS_LEN_BACK)
 	);
 
 	EnvelopeUnit EnvSq (
@@ -190,7 +222,9 @@ module SquareChan (
 		.din            (DIN[5:0]),
 		.addr           (Addr[0]),
 		.write          (subunit_write),
-		.envelope       (Envelope)
+		.envelope       (Envelope),
+		.SS_IN          (SS_ENV_IN),
+		.SS_BACK        (SS_ENV_BACK)
 	);
 
 	always_comb begin
@@ -248,22 +282,22 @@ module SquareChan (
 		end
 
 		if (reset) begin
-			Duty <= 0;
-			SweepEnable <= 0;
-			SweepNegate <= 0;
-			SweepReset <= 0;
-			SweepPeriod <= 0;
-			SweepDivider <= 0;
-			SweepShift <= 0;
-			Period <= 0;
-			TimerCtr <= 0;
-			SeqPos <= 0;
+			Duty         <= SS[1:0];   // 0;
+			SweepEnable  <= SS[2];     // 0;
+			SweepPeriod  <= SS[5:3];   // 0;
+			SweepNegate  <= SS[6];     // 0;
+			SweepShift   <= SS[9:7];   // 0;
+			Period       <= SS[20:10]; // 0;
+			TimerCtr     <= {1'b0, SS[31:21]}; // 0;
+			SeqPos       <= SS[34:32]; // 0;
+			SweepDivider <= SS[37:35]; // 0;
+			SweepReset   <= SS[38];    // 0;
 		end
 	end
 
 endmodule
 
-module TriangleChan (
+module TriangleChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_TRI, parameter [9:0] SSREG_INDEX_SM = SSREG_INDEX_APU_TRISM) (
 	input  logic       clk,
 	input  logic       phi1,
 	input  logic       aclk1,
@@ -280,8 +314,22 @@ module TriangleChan (
 	input  logic       Enabled,
 	input  logic       smooth_audio,
 	output logic [11:0] Sample,
-	output logic       IsNonZero
+	output logic       IsNonZero,
+	// savestates
+	input       [63:0]  SaveStateBus_Din,
+	input       [ 9:0]  SaveStateBus_Adr,
+	input               SaveStateBus_wren,
+	input               SaveStateBus_rst,
+	input               SaveStateBus_load,
+	output      [63:0]  SaveStateBus_Dout_A,
+	output      [63:0]  SaveStateBus_Dout_B
 );
+	// Savestates
+	wire [63:0] SS_A, SS_B;
+	wire [63:0] SS_BACK_A, SS_BACK_B;
+	eReg_SavestateV #(SSREG_INDEX,    64'd0) iREG_SAVESTATE_A (clk, SaveStateBus_Din, SaveStateBus_Adr, SaveStateBus_wren, SaveStateBus_rst, SaveStateBus_Dout_A, SS_BACK_A, SS_A);
+	eReg_SavestateV #(SSREG_INDEX_SM, 64'd0) iREG_SAVESTATE_B (clk, SaveStateBus_Din, SaveStateBus_Adr, SaveStateBus_wren, SaveStateBus_rst, SaveStateBus_Dout_B, SS_BACK_B, SS_B);
+
 	logic [10:0] Period, applied_period, TimerCtr;
 	logic [4:0] SeqPos;
 	logic [6:0] LinCtrPeriod, LinCtrPeriod_1, LinCtr;
@@ -289,11 +337,20 @@ module TriangleChan (
 	logic LinCtrZero;
 	logic lc;
 
-	logic LenCtrZero;
-	logic subunit_write;
 	logic [11:0] sample_latch;
+	logic [11:0] smooth_acc;
+	logic [13:0] err_acc;
+
+	wire [9:0] SS_LEN_BACK, SS_LEN_IN;
+	assign SS_LEN_IN = SS_B[9:0];
+
+	assign SS_BACK_A = {3'b0, line_reload, LinCtrl, LinCtr, LinCtrPeriod_1, LinCtrPeriod, SeqPos, TimerCtr, applied_period, Period};
+	assign SS_BACK_B = {16'b0, sample_latch, err_acc, smooth_acc, SS_LEN_BACK};
 
 	assign LinCtrZero = ~|LinCtr;
+	logic LenCtrZero;
+	logic subunit_write;
+
 	assign IsNonZero = lc;
 	assign subunit_write = (Addr == 0 || Addr == 3) & write;
 
@@ -304,8 +361,6 @@ module TriangleChan (
 	wire slope_up = (lookahead_Y > actual_Y);
 	wire slope_dn = (lookahead_Y < actual_Y);
 
-	logic [11:0] smooth_acc;
-	logic [13:0] err_acc;
 	wire [13:0] freq_adj = {3'd0, applied_period} + 14'd1;
 
 	// 12-bit Fractional Error Distributing Divider Network for Triangle
@@ -364,7 +419,9 @@ module TriangleChan (
 		.is_triangle    (1'b1),
 		.write          (subunit_write),
 		.enabled        (Enabled),
-		.lc_on          (lc)
+		.lc_on          (lc),
+		.SS_IN          (SS_LEN_IN),
+		.SS_BACK        (SS_LEN_BACK)
 	);
 
 	always_ff @(posedge clk) begin
@@ -431,17 +488,33 @@ module TriangleChan (
 			endcase
 		end
 
-		if (cold_reset) begin
-			sample_latch <= 12'hF00;
-			Period <= 0;
-			TimerCtr <= 0;
-			SeqPos <= 0;
-			LinCtrPeriod <= 0;
-			LinCtr <= 0;
-			LinCtrl <= 0;
-			line_reload <= 0;
-			smooth_acc <= 0;
-			err_acc <= 0;
+		if (reset) begin
+			Period         <= SS_A[10:0];
+			applied_period <= SS_A[21:11];
+			TimerCtr       <= SS_A[32:22];
+			SeqPos         <= SS_A[37:33];
+			LinCtrPeriod   <= SS_A[44:38];
+			LinCtrPeriod_1 <= SS_A[51:45];
+			LinCtr         <= SS_A[58:52];
+			LinCtrl        <= SS_A[59];
+			line_reload    <= SS_A[60];
+
+			smooth_acc     <= SS_B[22:11];
+			err_acc        <= SS_B[36:23];
+			sample_latch   <= SS_B[48:37];
+
+			if (cold_reset) begin
+				sample_latch <= 12'hF00;
+				Period <= 0;
+				TimerCtr <= 0;
+				SeqPos <= 0;
+				LinCtrPeriod <= 0;
+				LinCtr <= 0;
+				LinCtrl <= 0;
+				line_reload <= 0;
+				smooth_acc <= 0;
+				err_acc <= 0;
+			end
 		end
 
 		if (applied_period > 1) sample_latch <= Sample;
@@ -449,7 +522,7 @@ module TriangleChan (
 
 endmodule
 
-module NoiseChan (
+module NoiseChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_NOI) (
 	input  logic       clk,
 	input  logic       ce,
 	input  logic       aclk1,
@@ -465,8 +538,20 @@ module NoiseChan (
 	input  logic       Env_Clock,
 	input  logic       Enabled,
 	output logic [3:0] Sample,
-	output logic       IsNonZero
+	output logic       IsNonZero,
+	// savestates
+	input       [63:0]  SaveStateBus_Din,
+	input       [ 9:0]  SaveStateBus_Adr,
+	input               SaveStateBus_wren,
+	input               SaveStateBus_rst,
+	input               SaveStateBus_load,
+	output      [63:0]  SaveStateBus_Dout
 );
+	// Savestates
+	wire [63:0] SS;
+	wire [63:0] SS_BACK;
+	eReg_SavestateV #(SSREG_INDEX, 64'd0) iREG_SAVESTATE (clk, SaveStateBus_Din, SaveStateBus_Adr, SaveStateBus_wren, SaveStateBus_rst, SaveStateBus_Dout, SS_BACK, SS);
+
 	logic ShortMode;
 	logic [14:0] Shift;
 	logic [3:0] Period;
@@ -474,6 +559,14 @@ module NoiseChan (
 	logic [3:0] Envelope;
 	logic subunit_write;
 	logic lc;
+
+	wire [9:0] SS_LEN_BACK, SS_LEN_IN;
+	wire [14:0] SS_ENV_BACK, SS_ENV_IN;
+
+	assign SS_LEN_IN = SS[41:32];
+	assign SS_ENV_IN = SS[56:42];
+
+	assign SS_BACK = {7'b0, SS_ENV_BACK, SS_LEN_BACK, noise_clock, noise_timer, Period, Shift, ShortMode};
 
 	assign IsNonZero = lc;
 	assign subunit_write = (Addr == 0 || Addr == 3) & write;
@@ -494,7 +587,9 @@ module NoiseChan (
 		.is_triangle    (1'b0),
 		.write          (subunit_write),
 		.enabled        (Enabled),
-		.lc_on          (lc)
+		.lc_on          (lc),
+		.SS_IN          (SS_LEN_IN),
+		.SS_BACK        (SS_LEN_BACK)
 	);
 
 	EnvelopeUnit EnvNoi (
@@ -504,7 +599,9 @@ module NoiseChan (
 		.din            (DIN[5:0]),
 		.addr           (Addr[0]),
 		.write          (subunit_write),
-		.envelope       (Envelope)
+		.envelope       (Envelope),
+		.SS_IN          (SS_ENV_IN),
+		.SS_BACK        (SS_ENV_BACK)
 	);
 
 	logic [10:0] noise_pal_lut[16];
@@ -548,18 +645,20 @@ module NoiseChan (
 		end
 
 		if (reset) begin
-			if (|noise_timer) noise_timer <= (PAL ? noise_pal_lut[0] : noise_ntsc_lut[0]);
-			ShortMode <= 0;
-			Shift <= 0;
-			Period <= 0;
+			ShortMode   <= SS[0];     // 0;
+			Shift       <= SS[15:1];  // 0;
+			Period      <= SS[19:16]; // 0;
+			noise_timer <= SS[30:20]; // (PAL ? noise_pal_lut[0] : noise_ntsc_lut[0]);
+			noise_clock <= SS[31];    // 0;
 		end
 
 		if (cold_reset)
 			noise_timer <= 0;
 	end
+
 endmodule
 
-module DmcChan #(parameter [9:0] SSREG_INDEX_DMC1, parameter [9:0] SSREG_INDEX_DMC2)  (
+module DmcChan #(parameter [9:0] SSREG_INDEX_DMC1 = SSREG_INDEX_APU_DMC1, parameter [9:0] SSREG_INDEX_DMC2 = SSREG_INDEX_APU_DMC2)  (
 	input  logic        MMC5,
 	input  logic        clk,
 	input  logic        aclk1,
@@ -794,7 +893,7 @@ module DmcChan #(parameter [9:0] SSREG_INDEX_DMC1, parameter [9:0] SSREG_INDEX_D
 
 endmodule
 
-module FrameCtr #(parameter [9:0] SSREG_INDEX_FCT) (
+module FrameCtr #(parameter [9:0] SSREG_INDEX_FCT = SSREG_INDEX_APU_FCT) (
 	input  logic clk,
 	input  logic aclk1,
 	input  logic aclk2,
@@ -944,7 +1043,17 @@ module FrameCtr #(parameter [9:0] SSREG_INDEX_FCT) (
 
 endmodule
 
-module APU #(parameter [9:0] SSREG_INDEX_TOP, parameter [9:0] SSREG_INDEX_DMC1, parameter [9:0] SSREG_INDEX_DMC2, parameter [9:0] SSREG_INDEX_FCT)
+module APU #(
+	parameter [9:0] SSREG_INDEX_TOP    = SSREG_INDEX_APU_TOP,
+	parameter [9:0] SSREG_INDEX_DMC1   = SSREG_INDEX_APU_DMC1,
+	parameter [9:0] SSREG_INDEX_DMC2   = SSREG_INDEX_APU_DMC2,
+	parameter [9:0] SSREG_INDEX_FCT    = SSREG_INDEX_APU_FCT,
+	parameter [9:0] SSREG_INDEX_SQ1    = SSREG_INDEX_APU_SQ1,
+	parameter [9:0] SSREG_INDEX_SQ2    = SSREG_INDEX_APU_SQ2,
+	parameter [9:0] SSREG_INDEX_TRI    = SSREG_INDEX_APU_TRI,
+	parameter [9:0] SSREG_INDEX_NOI    = SSREG_INDEX_APU_NOI,
+	parameter [9:0] SSREG_INDEX_TRISM  = SSREG_INDEX_APU_TRISM
+)
 (
 	input  logic        MMC5,
 	input  logic        clk,
@@ -987,9 +1096,10 @@ module APU #(parameter [9:0] SSREG_INDEX_TOP, parameter [9:0] SSREG_INDEX_DMC1, 
 
 
 	// Savestates
-	localparam SAVESTATE_MODULES    = 3;
+	localparam SAVESTATE_MODULES    = 8;
 	wire [63:0] SaveStateBus_wired_or[0:SAVESTATE_MODULES-1];
-	assign SaveStateBus_Dout = SaveStateBus_wired_or[0] | SaveStateBus_wired_or[1] | SaveStateBus_wired_or[2];
+	assign SaveStateBus_Dout = SaveStateBus_wired_or[0] | SaveStateBus_wired_or[1] | SaveStateBus_wired_or[2] | SaveStateBus_wired_or[3] |
+	                           SaveStateBus_wired_or[4] | SaveStateBus_wired_or[5] | SaveStateBus_wired_or[6] | SaveStateBus_wired_or[7];
 
 	wire [63:0] SS_APU;
 	wire [63:0] SS_APU_BACK;
@@ -1034,13 +1144,20 @@ module APU #(parameter [9:0] SSREG_INDEX_TOP, parameter [9:0] SSREG_INDEX_DMC1, 
 	// -----------------------------------------------------------------------
 	logic [1:0] pitch_cnt;
 	// Only advance pitch_cnt on the 'put' cycle to prevent unpairing aclk1 and aclk1_delayed
-	always @(posedge clk) if (ce & ~get_or_put) begin
-		case (overclock)
-			2'd1:    pitch_cnt <= (pitch_cnt == 2'd3) ? 2'd0 : pitch_cnt + 2'd1; // 1.33x -> skip 1 of 4 (3/4 rate)
-			2'd2:    pitch_cnt <= (pitch_cnt == 2'd2) ? 2'd0 : pitch_cnt + 2'd1; // 1.50x -> skip 1 of 3 (2/3 rate)
-			2'd3:    pitch_cnt <= (pitch_cnt == 2'd1) ? 2'd0 : pitch_cnt + 2'd1; // 2.00x -> skip 1 of 2 (1/2 rate)
-			default: pitch_cnt <= 2'd0;
-		endcase
+	always @(posedge clk) begin
+		if (reset) begin
+			if (SaveStateBus_load)
+				pitch_cnt <= SS_APU[12:11];
+			else
+				pitch_cnt <= 2'd0;
+		end else if (ce & ~get_or_put) begin
+			case (overclock)
+				2'd1:    pitch_cnt <= (pitch_cnt == 2'd3) ? 2'd0 : pitch_cnt + 2'd1; // 1.33x -> skip 1 of 4 (3/4 rate)
+				2'd2:    pitch_cnt <= (pitch_cnt == 2'd2) ? 2'd0 : pitch_cnt + 2'd1; // 1.50x -> skip 1 of 3 (2/3 rate)
+				2'd3:    pitch_cnt <= (pitch_cnt == 2'd1) ? 2'd0 : pitch_cnt + 2'd1; // 2.00x -> skip 1 of 2 (1/2 rate)
+				default: pitch_cnt <= 2'd0;
+			endcase
+		end
 	end
 
 	wire pitch_ce = (overclock == 2'd1) ? (pitch_cnt != 2'd3) :
@@ -1086,7 +1203,8 @@ module APU #(parameter [9:0] SSREG_INDEX_TOP, parameter [9:0] SSREG_INDEX_DMC1, 
 	assign SS_APU_BACK[ 4: 0]    = enabled_buffer;
 	assign SS_APU_BACK[ 9: 5]    = enabled_buffer_1;
 	assign SS_APU_BACK[   10]    = phi2_old;
-	assign SS_APU_BACK[63:11]     = 53'b0; // free to be used
+	assign SS_APU_BACK[12:11]    = pitch_cnt;
+	assign SS_APU_BACK[63:13]    = 51'b0; // free to be used
 
 	always_ff @(posedge clk) begin
 		phi2_old <= PHI2;
@@ -1136,8 +1254,16 @@ module APU #(parameter [9:0] SSREG_INDEX_TOP, parameter [9:0] SSREG_INDEX_DMC1, 
 		.get_or_put   (get_or_put),
 		.Enabled      (Enabled[0]),
 		.Sample       (Sq1Sample),
-		.IsNonZero    (Sq1NonZero)
+		.IsNonZero    (Sq1NonZero),
+		// savestates
+		.SaveStateBus_Din  (SaveStateBus_Din ),
+		.SaveStateBus_Adr  (SaveStateBus_Adr ),
+		.SaveStateBus_wren (SaveStateBus_wren),
+		.SaveStateBus_rst  (SaveStateBus_rst ),
+		.SaveStateBus_load (SaveStateBus_load ),
+		.SaveStateBus_Dout (SaveStateBus_wired_or[3])
 	);
+	defparam Squ1.SSREG_INDEX = SSREG_INDEX_SQ1;
 
 	SquareChan Squ2 (
 		.MMC5         (MMC5),
@@ -1158,8 +1284,16 @@ module APU #(parameter [9:0] SSREG_INDEX_TOP, parameter [9:0] SSREG_INDEX_DMC1, 
 		.get_or_put   (get_or_put),
 		.Enabled      (Enabled[1]),
 		.Sample       (Sq2Sample),
-		.IsNonZero    (Sq2NonZero)
+		.IsNonZero    (Sq2NonZero),
+		// savestates
+		.SaveStateBus_Din  (SaveStateBus_Din ),
+		.SaveStateBus_Adr  (SaveStateBus_Adr ),
+		.SaveStateBus_wren (SaveStateBus_wren),
+		.SaveStateBus_rst  (SaveStateBus_rst ),
+		.SaveStateBus_load (SaveStateBus_load ),
+		.SaveStateBus_Dout (SaveStateBus_wired_or[4])
 	);
+	defparam Squ2.SSREG_INDEX = SSREG_INDEX_SQ2;
 
 	TriangleChan Tri (
 		.clk          (clk),
@@ -1178,8 +1312,18 @@ module APU #(parameter [9:0] SSREG_INDEX_TOP, parameter [9:0] SSREG_INDEX_DMC1, 
 		.Enabled      (Enabled[2]),
 		.smooth_audio (smooth_audio),
 		.Sample       (TriSample),
-		.IsNonZero    (TriNonZero)
+		.IsNonZero    (TriNonZero),
+		// savestates
+		.SaveStateBus_Din  (SaveStateBus_Din ),
+		.SaveStateBus_Adr  (SaveStateBus_Adr ),
+		.SaveStateBus_wren (SaveStateBus_wren),
+		.SaveStateBus_rst  (SaveStateBus_rst ),
+		.SaveStateBus_load (SaveStateBus_load ),
+		.SaveStateBus_Dout_A(SaveStateBus_wired_or[5]),
+		.SaveStateBus_Dout_B(SaveStateBus_wired_or[6])
 	);
+	defparam Tri.SSREG_INDEX    = SSREG_INDEX_TRI;
+	defparam Tri.SSREG_INDEX_SM = SSREG_INDEX_TRISM;
 
 	NoiseChan Noi (
 		.clk          (clk),
@@ -1197,8 +1341,16 @@ module APU #(parameter [9:0] SSREG_INDEX_TOP, parameter [9:0] SSREG_INDEX_DMC1, 
 		.Env_Clock    (ClkE),
 		.Enabled      (Enabled[3]),
 		.Sample       (NoiSample),
-		.IsNonZero    (NoiNonZero)
+		.IsNonZero    (NoiNonZero),
+		// savestates
+		.SaveStateBus_Din  (SaveStateBus_Din ),
+		.SaveStateBus_Adr  (SaveStateBus_Adr ),
+		.SaveStateBus_wren (SaveStateBus_wren),
+		.SaveStateBus_rst  (SaveStateBus_rst ),
+		.SaveStateBus_load (SaveStateBus_load ),
+		.SaveStateBus_Dout (SaveStateBus_wired_or[7])
 	);
+	defparam Noi.SSREG_INDEX = SSREG_INDEX_NOI;
 
 	DmcChan Dmc (
 		.MMC5        (MMC5),

@@ -251,19 +251,6 @@ reg [2:0] div_ppu_n_base = 3'd4;
 reg is_medium_oc = 1'b0;
 reg [1:0] overclock_latched = 2'd0;
 
-always @(posedge clk) begin
-	if (reset_nes) begin
-		overclock_latched <= overclock;
-		is_medium_oc <= (overclock == 2'd2);
-		case (overclock)
-			2'd1:    begin div_cpu_n <= 5'd9;  div_ppu_n_base <= 3'd3; end  // Turbo   1.33x (÷9/÷3)
-			2'd2:    begin div_cpu_n <= 5'd8;  div_ppu_n_base <= 3'd3; end  // Medium  1.50x (dynamic 3-3-2)
-			2'd3:    begin div_cpu_n <= 5'd6;  div_ppu_n_base <= 3'd2; end  // Extreme 2.00x (÷6/÷2)
-			default: begin div_cpu_n <= 5'd12; div_ppu_n_base <= 3'd4; end  // Off     1.00x (÷12/÷4)
-		endcase
-	end
-end
-
 // Dynamic PPU divider: For Medium (1.50x), CPU div is 8. To maintain the crucial 3:1 PPU:CPU 
 // ratio, the PPU divider must average 2.66. We safely achieve this perfectly by alternating 
 // the PPU divider: 3, 3, 2 (8 master clocks = exactly 3 PPU ticks).
@@ -369,6 +356,14 @@ always @(posedge clk) begin
 		cpu_tick_count <= 0;
 		freeze_clocks  <= 0;
 		faux_pixel_cnt <= 0;
+		overclock_latched <= overclock;
+		is_medium_oc <= (overclock == 2'd2);
+		case (overclock)
+			2'd1:    begin div_cpu_n <= 5'd9;  div_ppu_n_base <= 3'd3; end  // Turbo   1.33x (÷9/÷3)
+			2'd2:    begin div_cpu_n <= 5'd8;  div_ppu_n_base <= 3'd3; end  // Medium  1.50x (dynamic 3-3-2)
+			2'd3:    begin div_cpu_n <= 5'd6;  div_ppu_n_base <= 3'd2; end  // Extreme 2.00x (÷6/÷2)
+			default: begin div_cpu_n <= 5'd12; div_ppu_n_base <= 3'd4; end  // Off     1.00x (÷12/÷4)
+		endcase
 	end
 	if (cpu_ce && !reset_nes) hold_reset <= 0;
 	if (~freeze_clocks | ~(div_ppu == (div_ppu_n - 1'b1))) begin
@@ -410,7 +405,18 @@ always @(posedge clk) begin
 		bootvector_flag <= 1;
 		odd_or_even <= 1;
 	end else if (loading_savestate) begin
-		odd_or_even <= SS_TOP[0];
+		odd_or_even    <= SS_TOP[0];
+		div_cpu        <= SS_TOP[21:17];
+		div_native_cpu <= SS_TOP[26:22];
+		div_ppu        <= SS_TOP[29:27];
+		ppu_tick       <= SS_TOP[31:30];
+		cpu_tick_count <= SS_TOP[34:32];
+		div_sys        <= SS_TOP[36:35];
+		// Restore saved OC parameters so the core runs at the OC level it was saved under
+		overclock_latched <= SS_TOP[38:37];
+		div_cpu_n         <= SS_TOP[43:39];
+		div_ppu_n_base    <= SS_TOP[46:44];
+		is_medium_oc      <= SS_TOP[47];
 	end else if (cpu_ce) begin
 		odd_or_even <= ~odd_or_even;
 		bootvector_flag <= 0;
@@ -468,8 +474,6 @@ always @(posedge clk) begin
 
 end
 
-
-assign SS_TOP_BACK[0] = odd_or_even;
 
 ClockGen clockgen_pause(
 	.clk                 (clk),
@@ -600,7 +604,7 @@ APU apu(
 	.CS             (apu_cs),
 	.PAL            (sys_type == 2'b01),
 	.ce             (apu_ce),
-	.overclock      (overclock),
+	.overclock      (overclock_latched), // use latched value so savestate restores correct pitch
 	.reset          (reset),
 	.cold_reset     (cold_reset),
 	.ADDR           (addr[4:0]),
@@ -631,10 +635,6 @@ APU apu(
 	.SaveStateBus_load (loading_savestate ),
 	.SaveStateBus_Dout (SaveStateBus_wired_or[1])
 );
-defparam apu.SSREG_INDEX_TOP  = SSREG_INDEX_APU_TOP;
-defparam apu.SSREG_INDEX_DMC1 = SSREG_INDEX_APU_DMC1;
-defparam apu.SSREG_INDEX_DMC2 = SSREG_INDEX_APU_DMC2;
-defparam apu.SSREG_INDEX_FCT  = SSREG_INDEX_APU_FCT;
 
 // Output raw APU audio directly to the top level mixer
 assign sample = sample_apu;
@@ -788,7 +788,7 @@ cart_top multi_mapper (
 	.mapper_irq_pause  (mapper_irq_pause),        // Pause cycle-based mappers during OC extended Vblank
 	.mapper_ce         (mapper_ce),               // Always runs at unoverclocked 1.78MHz
 	.put_ce            (put_ce),                  // Pass phase-aligned CE for expansion audio
-	.overclock         (overclock),               // OC mode for expansion audio pitch correction
+	.overclock         (overclock_latched),        // use latched value so savestate restores correct pitch
 	.smooth_audio      (smooth_audio),            // Option toggle
 	// SDRAM Communication
 	.prg_aout          (prg_linaddr),             // SDRAM adjusted PRG RAM address
@@ -900,10 +900,21 @@ always @* begin
 	end
 end
 
+assign SS_TOP_BACK[ 0]    = odd_or_even;
 assign SS_TOP_BACK[ 8: 1] = open_bus_data;
 assign SS_TOP_BACK[16: 9] = external_data_bus;
-assign SS_TOP_BACK[63:17] = 47'b0; // free to be used
-
+assign SS_TOP_BACK[21:17] = div_cpu;
+assign SS_TOP_BACK[26:22] = div_native_cpu;
+assign SS_TOP_BACK[29:27] = div_ppu;
+assign SS_TOP_BACK[31:30] = ppu_tick;
+assign SS_TOP_BACK[34:32] = cpu_tick_count;
+assign SS_TOP_BACK[36:35] = div_sys;
+// OC parameters: restored on load so core always runs at the OC level it was saved under
+assign SS_TOP_BACK[38:37] = overclock_latched;
+assign SS_TOP_BACK[43:39] = div_cpu_n;
+assign SS_TOP_BACK[46:44] = div_ppu_n_base;
+assign SS_TOP_BACK[   47] = is_medium_oc;
+assign SS_TOP_BACK[63:48] = 16'b0; // free to be used
 
 /**********************************************************/
 /*************       Savestates             ***************/

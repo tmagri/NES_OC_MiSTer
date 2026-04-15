@@ -1,5 +1,7 @@
 // MMC3 style mappers. Some of these can probably be consolidated.
 
+import regs_savestates::*;
+
 // iNES mapper 64 and 158 - Tengen's version of MMC3
 module Rambo1(
 	input        clk,         // System clock

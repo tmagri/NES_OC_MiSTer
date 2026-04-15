@@ -1,5 +1,7 @@
 // These mappers are simple generic mappers which can eventually be combined into a single module with parameters
 
+import regs_savestates::*;
+
 // No mapper chip -- NOT currently used (Mapper28 is used for mapper 0)
 module MMC0(
 	input        clk,         // System clock

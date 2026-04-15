@@ -166,7 +166,6 @@ assign fine_x_scroll = vram_x;
 
 endmodule
 
-
 // Generates the current scanline / cycle counters
 module ClockGen #(parameter USE_SAVESTATE = 0) (
 	input clk,
@@ -196,6 +195,7 @@ module ClockGen #(parameter USE_SAVESTATE = 0) (
 	input [ 9:0]  SaveStateBus_Adr,
 	input         SaveStateBus_wren,
 	input         SaveStateBus_rst,
+	input         SaveStateBus_load,
 	output [63:0] SaveStateBus_Dout
 );
 
@@ -279,7 +279,9 @@ generate
 		assign SS_CLKGEN_BACK[   28] = hblank;
 		assign SS_CLKGEN_BACK[   29] = vsync;
 		assign SS_CLKGEN_BACK[   30] = hsync;
-		assign SS_CLKGEN_BACK[63:31] = 33'b0; // free to be used
+		assign SS_CLKGEN_BACK[40:31] = extra_lines;
+		assign SS_CLKGEN_BACK[   41] = oc_method;
+		assign SS_CLKGEN_BACK[63:42] = 22'b0; // free to be used
 	end else begin
 		assign SS_CLKGEN         = 64'b0;
 		assign SaveStateBus_Dout = SS_CLKGEN;
@@ -292,13 +294,16 @@ wire [9:0] video_vblank_start = (sys_type == 2'b10) ? 10'd291 : 10'd241;
 
 // Set if the current line is line 0..239
 always @(posedge clk) if (reset) begin
-	skip_next <= 0;
-	if (USE_SAVESTATE) begin
+	skip_next <= SS_CLKGEN[   26]; // 0;
+	if (USE_SAVESTATE && SaveStateBus_load) begin
 		cycle        <= SS_CLKGEN[  8:0]; // 338;
 		is_in_vblank <= SS_CLKGEN[    9]; // 0;
 		rendering_sr <= SS_CLKGEN[13:10]; // no reset before => 0 should be ok;
-		skip_next    <= SS_CLKGEN[   26]; // 0;
-		vblank       <= SS_CLKGEN[   27]; // 0;
+		// Clip scanline to the current mode's maximum to prevent "ghost lines" if mode was changed
+		scanline     <= (SS_CLKGEN[23:14] > vblank_end_status_sl) ? vblank_end_status_sl : SS_CLKGEN[23:14];
+		is_pre_render<= SS_CLKGEN[   24]; // 0;
+		is_even_frame<= SS_CLKGEN[   25]; // 0;
+		vblank       <= SS_CLKGEN[   27]; // 1;
 		hblank       <= SS_CLKGEN[   28]; // 0;
 		vsync        <= SS_CLKGEN[   29]; // 0;
 		hsync        <= SS_CLKGEN[   30]; // 0;
@@ -311,6 +316,15 @@ always @(posedge clk) if (reset) begin
 		hblank       <= 0;
 		vsync        <= 0;
 		hsync        <= 0;
+		if (USE_SAVESTATE) begin
+			scanline      <= SS_CLKGEN[23:14]; // restore full 10-bit scanline including OC region
+			is_pre_render <= SS_CLKGEN[   24]; // 0;
+			is_even_frame <= SS_CLKGEN[   25]; // 0;
+		end else begin
+			scanline      <= 0;
+			is_pre_render <= 0;
+			is_even_frame <= 0;
+		end
 	end
 end else if (ce) begin
 	if (cycle == 338) begin
@@ -332,25 +346,15 @@ end else if (ce) begin
 		vblank <= 1;
 	if (is_pre_render && hblank_period)
 		vblank <= 0;
-end
 
-always @(posedge clk) if (reset) begin
-	if (USE_SAVESTATE) begin
-		scanline      <= SS_CLKGEN[23:14]; // restore full 10-bit scanline including OC region
-		is_pre_render     <= SS_CLKGEN[   24]; // 0;
-		is_even_frame      <= SS_CLKGEN[   25]; // 0; // Resets to 0, the first frame will always end with 341 pixels.
-	end else begin
-		scanline          <= 0;
-		is_pre_render     <= 0;
-		is_even_frame      <= 0; // Resets to 0, the first frame will always end with 341 pixels.
+	if (end_of_line) begin
+		// Once the scanline counter reaches vblank_end_sl, it gets reset to -1 (pre-render).
+		scanline     <= ({1'b0, scanline} == vblank_end_sl) ? 10'b1111111111 : scanline + 1'd1;
+		is_pre_render <= ({1'b0, scanline} == vblank_end_sl);
+
+		if (scanline == 255)
+			is_even_frame <= ~is_even_frame;
 	end
-end else if (ce && end_of_line) begin
-	// Once the scanline counter reaches vblank_end_sl, it gets reset to -1 (pre-render).
-	scanline     <= ({1'b0, scanline} == vblank_end_sl) ? 10'b1111111111 : scanline + 1'd1;
-	is_pre_render <= ({1'b0, scanline} == vblank_end_sl);
-
-	if (scanline == 255)
-		is_even_frame <= ~is_even_frame;
 end
 
 endmodule // ClockGen
@@ -1412,6 +1416,7 @@ ClockGen clock(
 	.SaveStateBus_Adr  (SaveStateBus_Adr ),
 	.SaveStateBus_wren (SaveStateBus_wren),
 	.SaveStateBus_rst  (SaveStateBus_rst ),
+	.SaveStateBus_load (SaveStateBus_load),
 	.SaveStateBus_Dout (SaveStateBus_wired_or[2])
 );
 defparam clock.USE_SAVESTATE = 1;

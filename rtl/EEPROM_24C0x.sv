@@ -1,5 +1,6 @@
-// 24C01, 24C02 EEPROM support
 // by GreyRogue for NES MiSTer
+
+import regs_savestates::*;
 
 module EEPROM_24C0x
 (

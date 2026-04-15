@@ -3,6 +3,8 @@
 //
 // MiSTer port: Copyright (C) 2017,2018 Sorgelig
 
+import regs_savestates::*;
+
 module emu
 (
 	//Master input clock
