@@ -716,7 +716,7 @@ module mmc5_mixed (
 // NOTE: The apu volume is 100% of MMC5 and the polarity is reversed.
 wire [16:0] audio_o = audio + audio_in;
 wire [15:0] audio;
-assign audio_out = audio_o[16:1];
+assign audio_out = audio_o[16] ? 16'hFFFF : audio_o[15:0];
 
 wire apu_cs = (addr_in[15:5]==11'b0101_0000_000) && (addr_in[3]==0);
 wire DmaReq;          // 1 when DMC wants DMA

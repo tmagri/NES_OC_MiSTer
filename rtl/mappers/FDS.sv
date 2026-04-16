@@ -638,7 +638,7 @@ IIR_filter #(
 );
 
 wire [16:0] audio = audio_in + audio_exp_f;
-assign audio_out = audio[16:1];
+assign audio_out = audio[16] ? 16'hFFFF : audio[15:0];
 
 endmodule
 

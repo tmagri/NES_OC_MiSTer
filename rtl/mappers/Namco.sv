@@ -453,7 +453,7 @@ namco163_sound n163
 wire [9:0] saturated=n163_out[9:0] | {10{n163_out[10]}};    //this is still too quiet for the suggested 47k resistor, but more clipping will make some games sound bad
 wire [15:0] audio = {1'b0, saturated, 5'b0};
 wire [16:0] audio_mix = (!enable | disabled) ? {audio_in, 1'b0} : (submapper==5) ? (audio_in>>>2) + audio : (submapper==4) ? (audio_in>>>1) + audio : audio_in + audio;
-assign audio_out = audio_mix[16:1];
+assign audio_out = audio_mix[16] ? 16'hFFFF : audio_mix[15:0];
 
 // savestates
 localparam SAVESTATE_MODULES    = 2;
