@@ -1254,6 +1254,7 @@ module PPU(
 	input         cold_reset,       // power cycle
 	inout   [1:0] sys_type,         // System type. 0 = NTSC 1 = PAL 2 = Dendy 3 = Vs.
 	output  [5:0] color,            // output color value, one pixel outputted every clock
+	output        is_obj,           // 1 = pixel is from sprite layer, 0 = background
 	input   [7:0] din,              // input data from bus
 	output  [7:0] dout,             // output data to CPU
 	input   [2:0] ain,              // input address from CPU
@@ -1755,6 +1756,7 @@ always @(posedge clk) begin
 end
 
 reg [5:0] color_pipe[4];
+reg       is_obj_pipe[4];
 wire [5:0] color2;
 
 wire pal_writes_valid = is_pal_address && ~is_rendering;
@@ -1819,6 +1821,8 @@ debug_dots debug_d(
 
 wire [5:0] color0 = (not_grayscale ? color_pipe[0] : {color_pipe[0][5:4], 4'b0});
 wire [5:0] color1 = (mask_right | mask_left | mask_pal) ? 6'h0E : color2;
+
+assign is_obj = is_obj_pipe[0];
 
 wire clear_nmi = (clear_signal | (read && ain == 2));
 wire set_nmi = entering_vblank & ~clear_nmi;
@@ -1973,6 +1977,7 @@ always @(posedge clk) begin
 		write_2007_delayed <= {write_2007_delayed[3:0], (write && (ain == 7))};
 
 		color_pipe <= '{color1, color_pipe[0], color_pipe[1], color_pipe[2]};
+		is_obj_pipe <= '{pixel_is_obj, is_obj_pipe[0], is_obj_pipe[1], is_obj_pipe[2]};
 
 		latched_dout <= ppu_dbus;
 

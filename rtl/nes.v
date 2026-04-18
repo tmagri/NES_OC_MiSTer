@@ -83,6 +83,7 @@ module NES(
 	input  [63:0] mapper_flags,
 	output [15:0] sample,         // sample generated from APU
 	output  [5:0] color,          // pixel generated from PPU
+	output        is_obj,         // 1 = sprite pixel, 0 = background
 	output  [1:0] joypad_clock,   // Set to 1 for each joypad to clock it.
 	output  [2:0] joypad_out,     // Set to 1 to strobe joypads. Then set to zero to keep the value.
 	input   [4:0] joypad1_data,   // Port1
@@ -695,6 +696,7 @@ PPU ppu(
 	.debug_dots       (debug_dots),
 	.disable_oam_corruption(disable_oam_corruption),
 	.color            (color),
+	.is_obj           (is_obj),
 	.din              (dbus),
 	.dout             (ppu_dout),
 	.ain              (addr[2:0]),

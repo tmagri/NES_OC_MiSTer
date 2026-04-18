@@ -576,6 +576,7 @@ wire [15:0] sample;
 // When overclocked the APU runs faster, raising all audio pitch.
 
 wire  [5:0] color;
+wire        is_obj;
 wire  [2:0] joypad_out;
 wire  [1:0] joypad_clock;
 reg  [23:0] joypad_bits, joypad_bits2;
@@ -986,6 +987,7 @@ NES nes (
 	// Video
 	.ex_sprites      (status[25]),
 	.color           (color),
+	.is_obj          (is_obj),
 	.hsync           (nes_hsync),
 	.hblank          (nes_hblank),
 	.vsync           (nes_vsync),

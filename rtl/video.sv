@@ -25,6 +25,7 @@ module video
 	input  [5:0] load_color_index,
 
 	input        anti_epilepsy_en,
+	input        is_obj,
 
 	output   reg hold_reset,
 
@@ -180,6 +181,7 @@ wire in_active_display = (vc < 9'd240) && !hblank_period;
 reg [8:0] hc_d1;
 reg [7:0] vc_d1;
 reg in_active_display_d1, in_active_display_d2;
+reg is_obj_d1, is_obj_d2;
 
 always @(posedge clk) begin
 	if (pix_ce) begin
@@ -189,6 +191,9 @@ always @(posedge clk) begin
 		
 		in_active_display_d1 <= in_active_display;
 		in_active_display_d2 <= in_active_display_d1;
+
+		is_obj_d1 <= is_obj;
+		is_obj_d2 <= is_obj_d1;
 	end
 end
 
@@ -210,24 +215,24 @@ reg [16:0] fb_addr_d;
 
 // -----------------------------------------------------------------------
 // Compounding Temporal Blending Math (IIR Filter)
-// 25% Current Frame, 75% Accumulated History Frame
+// 12.5% Current Frame, 87.5% Accumulated History Frame (2-frame blur)
 // By feeding the blended pixel back into the framebuffer, the blur 
 // continuously compounds across multiple frames, completely suppressing 
 // 3+ color sequences like Zelda II's death screen.
 // -----------------------------------------------------------------------
 
-// Math: (ro + prev_rgb*2 + prev_rgb) / 4 -> Ensures no overflow
+// Math: (ro + prev_rgb*7) / 8 -> Ensures no overflow
 // Combinational: prev_rgb and ro are both registered and stable between
 // pix_ce edges, so these wires are glitch-free. Keeping blend combinational
 // ensures it has identical latency to ro (both 1 pix_ce behind hc),
 // eliminating any horizontal shift when strobe engages/disengages.
-wire [9:0] sum_r = {2'b00, ro} + {1'b0, prev_rgb[23:16], 1'b0} + {2'b00, prev_rgb[23:16]};
-wire [9:0] sum_g = {2'b00, go} + {1'b0, prev_rgb[15:8],  1'b0} + {2'b00, prev_rgb[15:8]};
-wire [9:0] sum_b = {2'b00, bo} + {1'b0, prev_rgb[7:0],   1'b0} + {2'b00, prev_rgb[7:0]};
+wire [10:0] sum_r = {3'b000, ro} + {3'b000, prev_rgb[23:16]} + {2'b00, prev_rgb[23:16], 1'b0} + {1'b0, prev_rgb[23:16], 2'b00};
+wire [10:0] sum_g = {3'b000, go} + {3'b000, prev_rgb[15:8]}  + {2'b00, prev_rgb[15:8],  1'b0} + {1'b0, prev_rgb[15:8],  2'b00};
+wire [10:0] sum_b = {3'b000, bo} + {3'b000, prev_rgb[7:0]}   + {2'b00, prev_rgb[7:0],   1'b0} + {1'b0, prev_rgb[7:0],   2'b00};
 
-wire [7:0] blend_r = sum_r[9:2];
-wire [7:0] blend_g = sum_g[9:2];
-wire [7:0] blend_b = sum_b[9:2];
+wire [7:0] blend_r = sum_r[10:3];
+wire [7:0] blend_g = sum_g[10:3];
+wire [7:0] blend_b = sum_b[10:3];
 
 // -----------------------------------------------------------------------
 // Framebuffer Read/Write Pipeline (latency-matched to ro/go/bo)
@@ -252,8 +257,12 @@ always @(posedge clk) begin
 		
 		// Write-back: uses fb_addr_d (address from last cycle = same pixel we read)
 		// and blend_r/ro (combinational/registered, both for that same pixel)
+		// Skip blending for sprite pixels — only blend background pixels
 		if (in_active_display_d2) begin
-			fb_ram[fb_addr_d] <= strobe_active ? {blend_r, blend_g, blend_b} : {ro, go, bo};
+			if (strobe_active && !is_obj_d2)
+				fb_ram[fb_addr_d] <= {blend_r, blend_g, blend_b};
+			else
+				fb_ram[fb_addr_d] <= {ro, go, bo};
 		end
 	end
 end
@@ -437,8 +446,9 @@ end
 // Output assignments with temporal blending
 // -----------------------------------------------------------------------
 
-assign R = strobe_active ? blend_r : ro;
-assign G = strobe_active ? blend_g : go;
-assign B = strobe_active ? blend_b : bo;
+// Output: sprite pixels bypass the blend, background pixels get blended
+assign R = (strobe_active && !is_obj_d2) ? blend_r : ro;
+assign G = (strobe_active && !is_obj_d2) ? blend_g : go;
+assign B = (strobe_active && !is_obj_d2) ? blend_b : bo;
 
 endmodule
