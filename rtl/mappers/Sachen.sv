@@ -67,6 +67,11 @@ reg [2:0] register;
 reg [2:0] prg_bank;
 reg [2:0] chr_bank_0, chr_bank_1, chr_bank_2, chr_bank_3, chr_bank_o, chr_bank_p;
 reg [2:0] mirroring;
+reg was_enabled;
+
+// Track enable transitions so we can initialize mirroring from the ROM header
+// on the first active clock (flags are valid then, unlike during ROM loading).
+always @(posedge clk) was_enabled <= enable;
 
 always @(posedge clk)
 if (~enable) begin
@@ -81,6 +86,11 @@ end else if (SaveStateBus_load) begin
 	chr_bank_o <= SS_MAP1[20:18];
 	chr_bank_p <= SS_MAP1[23:21];
 	mirroring  <= SS_MAP1[26:24];
+end else if (~was_enabled) begin
+	// First clock after mapper becomes active: seed mirroring from the ROM
+	// header (flags[14]=0 → Horizontal, flags[14]=1 → Vertical), matching
+	// Mesen2's BaseMapper default.  The game may override via register 7.
+	mirroring  <= {1'b0, ~flags[14], 1'b0};
 end else if (ce && prg_write) begin
 	if ({prg_ain[15:14], prg_ain[8], prg_ain[0]} == 4'b0110) begin
 		register <= prg_din[2:0];
