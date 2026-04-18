@@ -174,6 +174,13 @@ wire       strobe_active = (strobe_counter > 0) & anti_epilepsy_en;
 wire [9:0] pixel_luma = {2'b00, ri} + {2'b00, gi} + {2'b00, bi};
 wire in_active_display = (vc < 9'd240) && !hblank_period;
 
+// Per-channel frame sums for chrominance flash detection
+// SMB2 bomb explosions cycle the background through different-hued colors
+// of similar brightness (red/green/blue). Luma-only detection misses these
+// "chrominance flashes" entirely, so we track R, G, B sums separately.
+reg [23:0] frame_r_sum, frame_g_sum, frame_b_sum;
+reg [23:0] prev_frame_r_sum, prev_frame_g_sum, prev_frame_b_sum;
+
 // --- Bulletproof 2D Coordinate Tracking ---
 // We directly use the native horizontal counter (hc) because the NES hardware 
 // handles the wrapping perfectly. This guarantees we don't desync on skipped dots.
@@ -267,26 +274,56 @@ always @(posedge clk) begin
 	end
 end
 
-// Strobe calculation
+// Strobe calculation: detect both brightness AND color flashes
 wire [25:0] luma_delta = (frame_luma > prev_frame_luma) ? 
                          (frame_luma - prev_frame_luma) : 
                          (prev_frame_luma - frame_luma);
 
-wire flash_detected = (luma_delta > 26'd7_000_000);
+// Per-channel deltas catch chrominance flashes (e.g. SMB2 bomb: cycles
+// red→green→blue background colors of similar brightness)
+wire [23:0] r_delta = (frame_r_sum > prev_frame_r_sum) ?
+                      (frame_r_sum - prev_frame_r_sum) :
+                      (prev_frame_r_sum - frame_r_sum);
+wire [23:0] g_delta = (frame_g_sum > prev_frame_g_sum) ?
+                      (frame_g_sum - prev_frame_g_sum) :
+                      (prev_frame_g_sum - frame_g_sum);
+wire [23:0] b_delta = (frame_b_sum > prev_frame_b_sum) ?
+                      (frame_b_sum - prev_frame_b_sum) :
+                      (prev_frame_b_sum - frame_b_sum);
+
+wire flash_detected = (luma_delta > 26'd7_000_000) ||
+                      (r_delta > 24'd2_000_000) ||
+                      (g_delta > 24'd2_000_000) ||
+                      (b_delta > 24'd2_000_000);
 
 always @(posedge clk) begin
 	if (reset) begin
 		frame_luma <= 0;
 		prev_frame_luma <= 0;
+		frame_r_sum <= 0;
+		frame_g_sum <= 0;
+		frame_b_sum <= 0;
+		prev_frame_r_sum <= 0;
+		prev_frame_g_sum <= 0;
+		prev_frame_b_sum <= 0;
 		strobe_counter <= 0;
 	end else if (pix_ce) begin
 		if (in_active_display) begin
 			frame_luma <= frame_luma + pixel_luma;
+			frame_r_sum <= frame_r_sum + {16'b0, ri};
+			frame_g_sum <= frame_g_sum + {16'b0, gi};
+			frame_b_sum <= frame_b_sum + {16'b0, bi};
 		end
 		
 		if (vc == 9'd240 && hc == 9'd0) begin
 			prev_frame_luma <= frame_luma;
+			prev_frame_r_sum <= frame_r_sum;
+			prev_frame_g_sum <= frame_g_sum;
+			prev_frame_b_sum <= frame_b_sum;
 			frame_luma <= 0;
+			frame_r_sum <= 0;
+			frame_g_sum <= 0;
+			frame_b_sum <= 0;
 
 			if (flash_detected) begin
 				strobe_counter <= 4'd6; 
