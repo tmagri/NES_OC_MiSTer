@@ -183,7 +183,7 @@ module NES(
 	output  [7:0] SAVE_out_be,
 	input         SAVE_out_done,   // should be one cycle high when write is done or read value is valid
 	input   [1:0] overclock,       // 0=off, 1=mild 60fps, 2=full 60fps
-	input   [1:0] oc_method
+	input         oc_method
 );
 
 

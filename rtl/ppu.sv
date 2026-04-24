@@ -174,7 +174,7 @@ module ClockGen #(parameter USE_SAVESTATE = 0) (
 	input [1:0] sys_type,
 	input is_rendering,
 	input [9:0] extra_lines,  // OC: extra blank scanlines appended to vblank (0=off)
-	input [1:0] oc_method,
+	input oc_method,
 	output reg [9:0] scanline,
 	output reg [8:0] cycle,
 	output reg is_in_vblank,
@@ -210,30 +210,28 @@ wire [8:0] last_sl;
 wire skip_en;
 reg [3:0] rendering_sr;
 
-wire [9:0] extra_lines_pre = (oc_method == 1) ? extra_lines : (oc_method == 2) ? {1'b0, extra_lines[9:1]} : 10'd0;
-
 always_comb begin
 	case (sys_type)
 		2'b00,2'b11: begin // NTSC/Vs.
-			vblank_start_sl      = 10'd241 + extra_lines_pre;
+			vblank_start_sl      = 10'd241 + (oc_method ? extra_lines : 10'd0);
 			vblank_end_sl        = 10'd260 + extra_lines;
-			vblank_end_status_sl = 10'd261 + extra_lines_pre;
+			vblank_end_status_sl = 10'd261 + (oc_method ? extra_lines : 10'd0);
 			vsync_start_sl       = 10'd244;
 			skip_en              = 1'b1;
 		end
 
 		2'b01: begin       // PAL
-			vblank_start_sl      = 10'd241 + extra_lines_pre;
+			vblank_start_sl      = 10'd241 + (oc_method ? extra_lines : 10'd0);
 			vblank_end_sl        = 10'd310 + extra_lines;
-			vblank_end_status_sl = 10'd311 + extra_lines_pre;
+			vblank_end_status_sl = 10'd311 + (oc_method ? extra_lines : 10'd0);
 			vsync_start_sl       = 10'd269;
 			skip_en              = 1'b0;
 		end
 
 		2'b10: begin       // Dendy
-			vblank_start_sl      = 10'd291 + extra_lines_pre;
+			vblank_start_sl      = 10'd291 + (oc_method ? extra_lines : 10'd0);
 			vblank_end_sl        = 10'd310 + extra_lines;
-			vblank_end_status_sl = 10'd311 + extra_lines_pre;
+			vblank_end_status_sl = 10'd311 + (oc_method ? extra_lines : 10'd0);
 			vsync_start_sl       = 10'd269;
 			skip_en              = 1'b0;
 		end
@@ -282,8 +280,8 @@ generate
 		assign SS_CLKGEN_BACK[   29] = vsync;
 		assign SS_CLKGEN_BACK[   30] = hsync;
 		assign SS_CLKGEN_BACK[40:31] = extra_lines;
-		assign SS_CLKGEN_BACK[42:41] = oc_method;
-		assign SS_CLKGEN_BACK[63:43] = 21'b0; // free to be used
+		assign SS_CLKGEN_BACK[   41] = oc_method;
+		assign SS_CLKGEN_BACK[63:42] = 22'b0; // free to be used
 	end else begin
 		assign SS_CLKGEN         = 64'b0;
 		assign SaveStateBus_Dout = SS_CLKGEN;
@@ -1281,7 +1279,7 @@ module PPU(
 	input         extra_sprites,
 	input  [1:0]  mask,
 	input [9:0]   extra_lines,
-	input [1:0]   oc_method,
+	input         oc_method,
 	output        render_ena_out,
 	output        evenframe,
 	// savestates

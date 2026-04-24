@@ -242,7 +242,7 @@ parameter CONF_STR = {
 	"d7rB,Restore state(F1-F4);",
 	"-;",
 	"O[72:71],CPU Overclock,Off,Turbo (1.33x),Medium (1.50x),Extreme (2.00x);",
-	"O[79:78],OC Method,Postrender,VBlank,1/2 Split;",
+	"O[79:78],OC Method,Auto,Postrender,VBlank;",
 	"-;",
 	"P1,Audio & Video;",
 	"P1-;",
@@ -954,6 +954,23 @@ end
 
 wire nes_hblank, nes_hsync, nes_vsync, nes_vblank;
 
+wire [7:0] mapper_num = mapper_flags[7:0];
+wire is_vblank_mapper =
+	(mapper_num == 5) ||               // MMC5
+	(mapper_num == 19) ||              // Namco 163
+	(mapper_num >= 21 && mapper_num <= 26) || // VRC series
+	(mapper_num == 69) ||              // FME-7
+	(mapper_num == 73) ||              // VRC3
+	(mapper_num == 85);                // VRC7
+
+// 1 = Postrender, 0 = VBlank
+wire auto_oc_method = is_vblank_mapper ? 1'b0 : 1'b1;
+
+wire selected_oc_method = 
+	(status[79:78] == 2'd0) ? auto_oc_method : 
+	(status[79:78] == 2'd1) ? 1'b1 : // Postrender
+	1'b0;                            // VBlank
+
 NES nes (
 	.clk             (clk),
 	.reset_nes       (reset_nes),
@@ -1065,7 +1082,7 @@ NES nes (
 	.SAVE_out_be             (ss_be),
 	.SAVE_out_done           (ss_ack),           // should be one cycle high when write is done or read value is valid
 	.overclock               (status[72:71]),
-	.oc_method               (status[79:78] == 2'd0 ? 2'd1 : (status[79:78] == 2'd1 ? 2'd0 : 2'd2))
+	.oc_method               (selected_oc_method)
 );
 
 wire [24:0] cpu_addr;
