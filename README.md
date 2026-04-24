@@ -10,9 +10,9 @@ This is an FPGA implementation of the NES/Famicom based on [FPGANES](https://git
 
 A comprehensive suite of overclocking options designed to eliminate slowdowns while improving compatibility and stability across the NES library.
 
-* **Postrender Overclock (Default):** Applies overclocking after the PPU’s render phase. Avoids CPU/PPU timing conflicts, especially around $2002 reads, reduces visual glitches, and improves frame pacing. Recommended for games like *Kirby's Adventure* and *Battletoads*.
-* **1/2 Overclock (Split):** Distributes extra overclocking scanlines evenly before and after the NMI, creating a stable 0.5 VBlank Postrender configuration. Note: This may be useless for most games and was added as an experiment.
-* **VBlank Extension:** A CPU-only overclocking method that utilizes VBlank extension to increase CPU frequency while maintaining standard 60fps video and cycle-accurate audio. Recommended for games like *Parodius* and *Castlevania III \[J\]* which work better with this method.
+* **Auto (Default):** Intelligently selects the best OC method based on the loaded game's mapper. It defaults to the highly stable Postrender method for most games, but automatically switches to VBlank Extension for specialized mappers (like Konami VRC and MMC5) that require strict hardware synchronization.
+* **Postrender Overclock:** Applies overclocking after the PPU’s render phase. Avoids CPU/PPU timing conflicts, especially around $2002 reads, reduces visual glitches, and improves frame pacing. Essential for eliminating lag in CPU-heavy games like *Kirby's Adventure*, *Final Fantasy III [J]*, and *Super Mario Bros 2 [FDS]*.
+* **VBlank Extension:** A CPU-only overclocking method that utilizes VBlank extension to increase CPU frequency while maintaining standard 60fps video and cycle-accurate audio. Required for games like *Parodius* and *Castlevania III [J]* which use strict cycle-counting IRQs and break if the NMI is delayed.
 
 **Performance Modes:**
 
