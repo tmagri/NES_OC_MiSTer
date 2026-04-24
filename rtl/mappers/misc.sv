@@ -173,8 +173,9 @@ reg [15:0] irq_latch;
 reg eeprom_scl, eeprom_sda;
 wire submapper5 = (flags[24:21] == 5);
 wire mapper153 = (flags[7:0] == 153);
+wire mapper157 = (flags[7:0] == 157);
 wire mapper159 = (flags[7:0] == 159);
-wire mapperalt = submapper5 | mapper159 | mapper153;
+wire mapperalt = submapper5 | mapper159 | mapper153 | mapper157;
 
 always @(posedge clk) begin
 	if (~enable) begin
@@ -321,7 +322,7 @@ wire prg_is_ram = (prg_ain >= 'h6000) && (prg_ain < 'h8000);
 wire [21:0] prg_ram = {9'b11_1100_000, prg_ain[12:0]};
 assign prg_aout = prg_is_ram ? prg_ram : prg_aout_tmp;
 // EEPROM - not used - Could use write to EEPROM cycle for both reads and write accesses, but this is easier
-assign prg_dout = (!mapper153 && prg_is_ram) ? prg_write ? mapper_data_out : {3'b111, sda_out, 4'b1111} : 8'hFF;
+assign prg_dout = (!mapper153 && prg_is_ram) ? prg_write ? mapper_data_out : {3'b111, sda_out, mapper157 ? 1'b0 : 1'b1, 3'b111} : 8'hFF;
 wire prg_bus_write = (!mapper153 && prg_is_ram);
 
 assign prg_allow = (prg_ain[15] && !prg_write) || (prg_is_ram && eeprom_scl && mapper153);

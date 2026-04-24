@@ -538,7 +538,7 @@ wire [17:0] map16_mapper_addr;
 Mapper16 map16(
 	.clk        (clk),
 	.ce         (ce),
-	.enable     (me[159] | me[153] | me[16]),
+	.enable     (me[159] | me[157] | me[153] | me[16]),
 	.flags      (flags),
 	.prg_ain    (prg_ain),
 	.prg_aout_b (prg_addr_b),

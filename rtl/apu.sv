@@ -1467,6 +1467,12 @@ assign pulse_lut = '{
 	16'h3BDF, 16'h3DC7, 16'h3FA6, 16'h417D, 16'h434B, 16'h4510, 16'h46CD, 16'h0000
 };
 
+logic [5:0] tri_lut[16];
+assign tri_lut = '{
+	6'h00, 6'h04, 6'h08, 6'h0C, 6'h10, 6'h14, 6'h18, 6'h1C,
+	6'h20, 6'h24, 6'h28, 6'h2C, 6'h30, 6'h34, 6'h38, 6'h3C
+};
+
 logic [5:0] noise_lut[16];
 assign noise_lut = '{
 	6'h00, 6'h03, 6'h05, 6'h08, 6'h0B, 6'h0D, 6'h10, 6'h13,
@@ -1573,7 +1579,7 @@ assign sample_sq2 = pulse_lut[{s2_m, 1'b0}];
 
 // Triangle individual output with Smooth Audio
 wire [5:0] tri_frac = t_m[5:0];
-wire [8:0] tri_reg_idx  = {t_m[11:8], 2'b00};
+wire [8:0] tri_reg_idx  = {3'd0, tri_lut[t_m[11:8]]};
 wire [8:0] tri_base_idx = t_m[11:6];
 wire [8:0] tri_next_idx = t_m[11:6] + 9'd1;
 wire [8:0] noi_idx      = {3'd0, noise_lut[n_m]};
@@ -1606,7 +1612,12 @@ wire [15:0] val_next = mix_lut[mix_base + 9'd3]; // +3 offsets the (* 2'd3) tria
 // Interpolate the non-linear LUT using the fractional triangle bits
 // tri_frac is exactly t_m[5:0] (defined earlier in the module)
 wire [15:0] tnd_smooth = val_base + (((val_next - val_base) * {10'd0, tri_frac}) >> 6);
-wire [15:0] tnd_out = smooth_audio ? tnd_smooth : val_base;
+
+// Old LUT logic for accurate NES audio when Smooth Audio is OFF
+wire [8:0] mix_base_old = {3'd0, tri_lut[t_m[11:8]]} + {3'd0, noise_lut[n_m]} + {1'b0, dmc_lut[d_m]};
+wire [15:0] val_base_old = mix_lut[mix_base_old];
+
+wire [15:0] tnd_out = smooth_audio ? tnd_smooth : val_base_old;
 
 assign sample = pulse_lut[sq_sum] + tnd_out;
 endmodule
