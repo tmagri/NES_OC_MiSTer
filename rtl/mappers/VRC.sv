@@ -7,6 +7,8 @@ module VRC1(
 	input        mapper_ce,   // Native un-overclocked M2
 	input        mapper_irq_pause,
 	input        smooth_audio,
+	input  [1:0] scale_mode,
+	input  [3:0] root_key,
 	input        enable,      // Mapper enabled
 	input [31:0] flags,       // Cart flags
 	input [15:0] prg_ain,     // prg address
@@ -137,6 +139,8 @@ module VRC3(
 	input        mapper_ce,   // Native un-overclocked M2
 	input        mapper_irq_pause,
 	input        smooth_audio,
+	input  [1:0] scale_mode,
+	input  [3:0] root_key,
 	input        enable,      // Mapper enabled
 	input [31:0] flags,       // Cart flags
 	input [15:0] prg_ain,     // prg address
@@ -274,6 +278,8 @@ module VRC24(
 	input        mapper_ce,   // Native un-overclocked M2
 	input        mapper_irq_pause,
 	input        smooth_audio,
+	input  [1:0] scale_mode,
+	input  [3:0] root_key,
 	input        enable,      // Mapper enabled
 	input [31:0] flags,       // Cart flags
 	input [15:0] prg_ain,     // prg address
@@ -498,6 +504,8 @@ module VRC6(
 	input        mapper_ce,   // Native un-overclocked M2
 	input        mapper_irq_pause,
 	input        smooth_audio,
+	input  [1:0] scale_mode,
+	input  [3:0] root_key,
 	input        enable,      // Mapper enabled
 	input [31:0] flags,       // Cart flags
 	input [15:0] prg_ain,     // prg address
@@ -604,6 +612,8 @@ module VRC7(
 	input        mapper_ce,   // Native un-overclocked M2
 	input        mapper_irq_pause,
 	input        smooth_audio,
+	input  [1:0] scale_mode,
+	input  [3:0] root_key,
 	input        enable,      // Mapper enabled
 	input [31:0] flags,       // Cart flags
 	input [15:0] prg_ain,     // prg address
@@ -1076,7 +1086,9 @@ module vrc7_mixed (
 	input         clk,
 	input         ce,
 	input         mapper_ce,
-	input         smooth_audio,
+	input        smooth_audio,
+	input  [1:0] scale_mode,
+	input  [3:0] root_key,
 	input         enable,
 	input         wren,
 	input  [15:0] addr_in,
@@ -1134,7 +1146,9 @@ module vrc6_mixed (
 	input         mapper_ce,
 	input         put_ce,
 	input   [1:0] overclock,
-	input         smooth_audio,
+	input        smooth_audio,
+	input  [1:0] scale_mode,
+	input  [3:0] root_key,
 	input         enable,
 	input         wren,
 	input         addr_invert,
@@ -1164,7 +1178,9 @@ vrc6sound snd_vrc6 (
 	.outSq1(vrc6sq1_out),
 	.outSq2(vrc6sq2_out),
 	.outSaw(vrc6saw_out),
-	.smooth_audio(smooth_audio), // NEW
+	.smooth_audio(smooth_audio),
+	.scale_mode(scale_mode),
+	.root_key(root_key),
 	// savestates
 	.SaveStateBus_Din  (SaveStateBus_Din ), 
 	.SaveStateBus_Adr  (SaveStateBus_Adr ),
@@ -1216,7 +1232,9 @@ module vrc6sound(
 	output [3:0] outSq1,       //range=0..0x0F
 	output [3:0] outSq2,       //range=0..0x0F
 	output [11:0] outSaw,      //range=0..0xFFF (Expanded for smooth sawtooth)
-	input  smooth_audio,       // NEW
+	input  smooth_audio,
+	input  [1:0] scale_mode,
+	input  [3:0] root_key,   
 	// savestates              
 	input       [63:0]  SaveStateBus_Din,
 	input       [ 9:0]  SaveStateBus_Adr,
@@ -1224,6 +1242,32 @@ module vrc6sound(
 	input               SaveStateBus_rst,
 	input               SaveStateBus_load,
 	output      [63:0]  SaveStateBus_Dout
+);
+// Wires for snapped frequencies
+wire [11:0] snapped_freq0;
+wire [11:0] snapped_freq1;
+wire [11:0] snapped_freq2;
+
+// Scale Snapper Instantiations
+VRC_ScaleSnapper snapper_sq1 (
+	.Period(freq0),
+	.scale_mode(scale_mode),
+	.root_key(root_key),
+	.snapped_period(snapped_freq0)
+);
+
+VRC_ScaleSnapper snapper_sq2 (
+	.Period(freq1),
+	.scale_mode(scale_mode),
+	.root_key(root_key),
+	.snapped_period(snapped_freq1)
+);
+
+VRC_ScaleSnapper snapper_saw (
+	.Period(freq2),
+	.scale_mode(scale_mode),
+	.root_key(root_key),
+	.snapped_period(snapped_freq2)
 );
 
 wire [15:0] ain=addr_invert ? {addr_in[15:2],addr_in[0],addr_in[1]} :  addr_in; //MAP1A : MAP18
@@ -1243,7 +1287,7 @@ reg [7:0] acc;
 
 reg [11:0] smooth_acc;
 reg [14:0] err_acc;
-wire [13:0] freq2_adj = {1'b0, freq2, 1'b1} + 14'd1;
+wire [13:0] freq2_adj = {1'b0, snapped_freq2, 1'b1} + 14'd1;
 
 // 12-bit Fractional Error Distributing Divider Network
 // Adds precisely (vol2 * 17) micro-steps distributed uniformly over freq2_adj clocks
@@ -1356,7 +1400,7 @@ always@(posedge clk) begin
 				if(div0!=0)
 					div0<=div0-1'd1;
 				else begin
-					div0<=freq0;
+					div0<=snapped_freq0;
 					duty0cnt<=duty0cnt+1'd1;
 				end
 			end
@@ -1364,7 +1408,7 @@ always@(posedge clk) begin
 				if(div1!=0)
 					div1<=div1-1'd1;
 				else begin
-					div1<=freq1;
+					div1<=snapped_freq1;
 					duty1cnt<=duty1cnt+1'd1;
 				end
 			end
@@ -1380,7 +1424,7 @@ always@(posedge clk) begin
 						smooth_acc <= smooth_acc + total_inc; // Purposely allows hardware-accurate 12-bit overflow wrapping
 					end
 				end else begin
-					div2<={freq2,1'b1};
+					div2<={snapped_freq2,1'b1};
 					if(duty2cnt==6) begin
 						duty2cnt<=0;
 						acc<=0;
@@ -1456,6 +1500,8 @@ module VRC5(
 	input        mapper_ce,   // Native un-overclocked M2
 	input        mapper_irq_pause,
 	input        smooth_audio,
+	input  [1:0] scale_mode,
+	input  [3:0] root_key,
 	input        enable,      // Mapper enabled
 	input [31:0] flags,       // Cart flags
 	input [15:0] prg_ain,     // prg address
@@ -1731,4 +1777,125 @@ eReg_SavestateV #(SSREG_INDEX_MAP2, 64'h0000000000000000) iREG_SAVESTATE_MAP2 (c
 
 assign SaveStateBus_Dout = enable ? SaveStateBus_Dout_active : 64'h0000000000000000;
 
+endmodule
+
+// Helper Scale Snapping Core Module
+module VRC_ScaleSnapper (
+	input  logic [11:0] Period,
+	input  logic [1:0]  scale_mode,
+	input  logic [3:0]  root_key,
+	output logic [11:0] snapped_period
+);
+	logic [11:0] norm_period;
+	logic [2:0]  shift_amt;
+	logic        shift_dir;
+
+	always_comb begin
+		norm_period = Period;
+		shift_amt   = 3'd0;
+		shift_dir   = 1'b0;
+		
+		if (Period >= 12'd3408) begin
+			norm_period = Period >> 4; shift_amt = 3'd4; shift_dir = 1'b1;
+		end else if (Period >= 12'd1704) begin
+			norm_period = Period >> 3; shift_amt = 3'd3; shift_dir = 1'b1;
+		end else if (Period >= 12'd852) begin
+			norm_period = Period >> 2; shift_amt = 3'd2; shift_dir = 1'b1;
+		end else if (Period >= 12'd426) begin
+			norm_period = Period >> 1; shift_amt = 3'd1; shift_dir = 1'b1;
+		end else if (Period >= 12'd213) begin
+			norm_period = Period;      shift_amt = 3'd0; shift_dir = 1'b0;
+		end else if (Period >= 12'd106) begin
+			norm_period = Period << 1; shift_amt = 3'd1; shift_dir = 1'b0;
+		end else if (Period >= 12'd53) begin
+			norm_period = Period << 2; shift_amt = 3'd2; shift_dir = 1'b0;
+		end else if (Period >= 12'd26) begin
+			norm_period = Period << 3; shift_amt = 3'd3; shift_dir = 1'b0;
+		end else if (Period >= 12'd13) begin
+			norm_period = Period << 4; shift_amt = 3'd4; shift_dir = 1'b0;
+		end else begin
+			norm_period = Period << 5; shift_amt = 3'd5; shift_dir = 1'b0;
+		end
+	end
+
+	logic [3:0] current_note;
+	always_comb begin
+		if      (norm_period >= 12'd415) current_note = 4'd0;  // C
+		else if (norm_period >= 12'd391) current_note = 4'd1;  // C#
+		else if (norm_period >= 12'd369) current_note = 4'd2;  // D
+		else if (norm_period >= 12'd348) current_note = 4'd3;  // D#
+		else if (norm_period >= 12'd328) current_note = 4'd4;  // E
+		else if (norm_period >= 12'd310) current_note = 4'd5;  // F
+		else if (norm_period >= 12'd292) current_note = 4'd6;  // F#
+		else if (norm_period >= 12'd275) current_note = 4'd7;  // G
+		else if (norm_period >= 12'd260) current_note = 4'd8;  // G#
+		else if (norm_period >= 12'd246) current_note = 4'd9;  // A
+		else if (norm_period >= 12'd232) current_note = 4'd10; // A#
+		else                             current_note = 4'd11; // B
+	end
+
+	logic [3:0] interval;
+	assign interval = (current_note >= root_key) ? (current_note - root_key) : (current_note + 4'd12 - root_key);
+
+	logic [3:0] snapped_interval;
+	always_comb begin
+		snapped_interval = interval;
+		if (scale_mode == 2'd1) begin // FORCE MAJOR KEY
+			case (interval)
+				4'd1:  snapped_interval = 4'd0;
+				4'd3:  snapped_interval = 4'd4;  // Minor 3rd -> Major 3rd
+				4'd6:  snapped_interval = 4'd5;
+				4'd8:  snapped_interval = 4'd9;
+				4'd10: snapped_interval = 4'd11;
+				default: snapped_interval = interval;
+			endcase
+		end else if (scale_mode == 2'd2) begin // FORCE MINOR KEY
+			case (interval)
+				4'd1:  snapped_interval = 4'd0;
+				4'd4:  snapped_interval = 4'd3;  // Major 3rd -> Minor 3rd
+				4'd6:  snapped_interval = 4'd5;
+				4'd9:  snapped_interval = 4'd8;
+				4'd11: snapped_interval = 4'd10;
+				default: snapped_interval = interval;
+			endcase
+		end
+	end
+
+	logic [4:0] temp_note;
+	logic [3:0] snapped_note;
+	always_comb begin
+		temp_note = {1'b0, root_key} + {1'b0, snapped_interval};
+		if (temp_note >= 5'd12) snapped_note = temp_note[3:0] - 4'd12;
+		else                    snapped_note = temp_note[3:0];
+	end
+
+	logic [11:0] snapped_base_period;
+	always_comb begin
+		case (snapped_note)
+			4'd0:  snapped_base_period = 12'd427; // C
+			4'd1:  snapped_base_period = 12'd403; // C#
+			4'd2:  snapped_base_period = 12'd380; // D
+			4'd3:  snapped_base_period = 12'd358; // D#
+			4'd4:  snapped_base_period = 12'd338; // E
+			4'd5:  snapped_base_period = 12'd319; // F
+			4'd6:  snapped_base_period = 12'd301; // F#
+			4'd7:  snapped_base_period = 12'd283; // G
+			4'd8:  snapped_base_period = 12'd267; // G#
+			4'd9:  snapped_base_period = 12'd253; // A
+			4'd10: snapped_base_period = 12'd239; // A#
+			4'd11: snapped_base_period = 12'd225; // B
+			default: snapped_base_period = 12'd427;
+		endcase
+	end
+
+	always_comb begin
+		if (scale_mode == 2'd0) begin
+			snapped_period = Period;
+		end else begin
+			if (shift_dir == 1'b1)
+				snapped_period = snapped_base_period << shift_amt;
+			else
+				snapped_period = snapped_base_period >> shift_amt;
+		end
+	end
 endmodule

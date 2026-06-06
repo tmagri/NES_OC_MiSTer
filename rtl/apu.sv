@@ -145,6 +145,8 @@ module SquareChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_SQ1) (
 	output logic [3:0] Sample,
 	output logic       IsNonZero,
 	input logic 	   swap_duty,
+	input logic [1:0]  scale_mode,     // 00=Off, 01=Force Major Scale, 10=Force Minor Scale
+	input logic [3:0]  root_key,       // 0=C, 1=C#, 2=D, ... 11=B
 	// savestates
 	input       [63:0]  SaveStateBus_Din,
 	input       [ 9:0]  SaveStateBus_Adr,
@@ -246,6 +248,126 @@ module SquareChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_SQ1) (
 		endcase
 	end
 
+	// --- Musical Auto-Tune System ---
+	logic [10:0] norm_period;
+	logic [2:0]  shift_amt;
+	logic        shift_dir; // 0 = Shift Left (High Pitch), 1 = Shift Right (Low Pitch)
+
+	// 1. Normalise the raw period into a "Base Octave" window (roughly between 213 and 427 ticks)
+	always_comb begin
+		norm_period = Period;
+		shift_amt   = 3'd0;
+		shift_dir   = 1'b0;
+		
+		if (Period >= 11'd1704) begin
+			norm_period = Period >> 3; shift_amt = 3'd3; shift_dir = 1'b1;
+		end else if (Period >= 11'd852) begin
+			norm_period = Period >> 2; shift_amt = 3'd2; shift_dir = 1'b1;
+		end else if (Period >= 11'd426) begin
+			norm_period = Period >> 1; shift_amt = 3'd1; shift_dir = 1'b1;
+		end else if (Period >= 11'd213) begin
+			norm_period = Period;      shift_amt = 3'd0; shift_dir = 1'b0;
+		end else if (Period >= 11'd106) begin
+			norm_period = Period << 1; shift_amt = 3'd1; shift_dir = 1'b0;
+		end else if (Period >= 11'd53) begin
+			norm_period = Period << 2; shift_amt = 3'd2; shift_dir = 1'b0;
+		end else if (Period >= 11'd26) begin
+			norm_period = Period << 3; shift_amt = 3'd3; shift_dir = 1'b0;
+		end else if (Period >= 11'd13) begin
+			norm_period = Period << 4; shift_amt = 3'd4; shift_dir = 1'b0;
+		end else begin
+			norm_period = Period << 5; shift_amt = 3'd5; shift_dir = 1'b0;
+		end
+	end
+
+	// 2. Decode the raw normalised period into an absolute semitone note index
+	logic [3:0] current_note; // 0=C, 1=C#, 2=D, ... 11=B
+	always_comb begin
+		if      (norm_period >= 11'd415) current_note = 4'd0;  // C
+		else if (norm_period >= 11'd391) current_note = 4'd1;  // C#
+		else if (norm_period >= 11'd369) current_note = 4'd2;  // D
+		else if (norm_period >= 11'd348) current_note = 4'd3;  // D#
+		else if (norm_period >= 11'd328) current_note = 4'd4;  // E
+		else if (norm_period >= 11'd310) current_note = 4'd5;  // F
+		else if (norm_period >= 11'd292) current_note = 4'd6;  // F#
+		else if (norm_period >= 11'd275) current_note = 4'd7;  // G
+		else if (norm_period >= 11'd260) current_note = 4'd8;  // G#
+		else if (norm_period >= 11'd246) current_note = 4'd9;  // A
+		else if (norm_period >= 11'd232) current_note = 4'd10; // A#
+		else                             current_note = 4'd11; // B
+	end
+
+	// 3. Find the current note's interval distance relative to our OSD song root key
+	logic [3:0] interval;
+	assign interval = (current_note >= root_key) ? (current_note - root_key) : (current_note + 4'd12 - root_key);
+
+	// 4. Force/snap illegal intervals into strict Major or Minor interval alignments
+	logic [3:0] snapped_interval;
+	always_comb begin
+		snapped_interval = interval;
+		if (scale_mode == 2'd1) begin // FORCE MAJOR KEY
+			case (interval)
+				4'd1:  snapped_interval = 4'd0;  // Flat 2nd -> Root
+				4'd3:  snapped_interval = 4'd4;  // Minor 3rd -> Major 3rd! (The funniest transformation)
+				4'd6:  snapped_interval = 4'd5;  // Tritone -> Perfect 4th
+				4'd8:  snapped_interval = 4'd9;  // Minor 6th -> Major 6th
+				4'd10: snapped_interval = 4'd11; // Minor 7th -> Major 7th
+				default: snapped_interval = interval;
+			endcase
+		end else if (scale_mode == 2'd2) begin // FORCE MINOR KEY
+			case (interval)
+				4'd1:  snapped_interval = 4'd0;  // Flat 2nd -> Root
+				4'd4:  snapped_interval = 4'd3;  // Major 3rd -> Minor 3rd! (Instantly makes songs moody)
+				4'd6:  snapped_interval = 4'd5;  // Tritone -> Perfect 4th
+				4'd9:  snapped_interval = 4'd8;  // Major 6th -> Minor 6th
+				4'd11: snapped_interval = 4'd10; // Major 7th -> Minor 7th
+				default: snapped_interval = interval;
+			endcase
+		end
+	end
+
+	// 5. Compute the absolute snapped target note index (Optimised to avoid divider hardware)
+	logic [4:0] temp_note;
+	logic [3:0] snapped_note;
+	always_comb begin
+		temp_note = {1'b0, root_key} + {1'b0, snapped_interval};
+		if (temp_note >= 5'd12) snapped_note = temp_note[3:0] - 4'd12;
+		else                    snapped_note = temp_note[3:0];
+	end
+
+	// 6. Pull the ideal baseline period value for the snapped note
+	logic [10:0] snapped_base_period;
+	always_comb begin
+		case (snapped_note)
+			4'd0:  snapped_base_period = 11'd427; // C
+			4'd1:  snapped_base_period = 11'd403; // C#
+			4'd2:  snapped_base_period = 11'd380; // D
+			4'd3:  snapped_base_period = 11'd358; // D#
+			4'd4:  snapped_base_period = 11'd338; // E
+			4'd5:  snapped_base_period = 11'd319; // F
+			4'd6:  snapped_base_period = 11'd301; // F#
+			4'd7:  snapped_base_period = 11'd283; // G
+			4'd8:  snapped_base_period = 11'd267; // G#
+			4'd9:  snapped_base_period = 11'd253; // A
+			4'd10: snapped_base_period = 11'd239; // A#
+			4'd11: snapped_base_period = 11'd225; // B
+			default: snapped_base_period = 11'd427;
+		endcase
+	end
+
+	// 7. De-normalise the snapped base period back to its original target octave range
+	logic [10:0] snapped_period;
+	always_comb begin
+		if (scale_mode == 2'd0) begin
+			snapped_period = Period;
+		end else begin
+			if (shift_dir == 1'b1)
+				snapped_period = snapped_base_period << shift_amt;
+			else
+				snapped_period = snapped_base_period >> shift_amt;
+		end
+	end
+
 	always_ff @(posedge clk) begin : sqblock
 		// Unusual to APU design, the square timers are clocked overlapping two phi2. This
 		// means that writes can impact this operation as they happen, however because of the way
@@ -254,7 +376,7 @@ module SquareChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_SQ1) (
 
 		if (aclk1_d) begin
 			if (TimerCtr == 0) begin
-				TimerCtr <= Period;
+				TimerCtr <= snapped_period;
 				SeqPos <= SeqPos - 1'd1;
 			end else begin
 				TimerCtr <= TimerCtr - 1'd1;
@@ -1045,7 +1167,7 @@ module FrameCtr #(parameter [9:0] SSREG_INDEX_FCT = SSREG_INDEX_APU_FCT) (
 	assign irq = FrameInterrupt && ~DisableFrameInterrupt;
 	assign irq_flag = frame_interrupt_buffer;
 
-	// This is implemented from the original LSFR frame counter logic taken from the 2A03 netlists. The
+	// This is implemented from the original LFSR frame counter logic taken from the 2A03 netlists. The
 	// PAL LFSR numbers are educated guesses based on existing observed cycle numbers, but they may not
 	// be perfectly correct.
 
@@ -1174,6 +1296,8 @@ module APU #(
 	input  logic        smooth_audio,   // Smooth out quantisation noise in triagnle wave
 	input  logic        smooth_noise,   // Noise envelope attack smoother
 	input  logic        swap_duty,		// Famiclone duty swap 25 <-> 50
+	input  logic [1:0]  scale_mode,     // 00=Off, 01=Major Key, 10=Minor Key
+	input  logic [3:0]  root_key,       // 0=C, 1=C#, 2=D, ... 11=B
 	// savestates
 	input       [63:0]  SaveStateBus_Din,
 	input       [ 9:0]  SaveStateBus_Adr,
@@ -1344,7 +1468,9 @@ module APU #(
 		.Enabled      (Enabled[0]),
 		.Sample       (Sq1Sample),
 		.IsNonZero    (Sq1NonZero),
-		.swap_duty (swap_duty),
+		.swap_duty    (swap_duty),
+		.scale_mode   (scale_mode),
+		.root_key     (root_key),
 		// savestates
 		.SaveStateBus_Din  (SaveStateBus_Din ),
 		.SaveStateBus_Adr  (SaveStateBus_Adr ),
@@ -1375,7 +1501,9 @@ module APU #(
 		.Enabled      (Enabled[1]),
 		.Sample       (Sq2Sample),
 		.IsNonZero    (Sq2NonZero),
-		.swap_duty (swap_duty),
+		.swap_duty    (swap_duty),
+		.scale_mode   (scale_mode),
+		.root_key     (root_key),
 		// savestates
 		.SaveStateBus_Din  (SaveStateBus_Din ),
 		.SaveStateBus_Adr  (SaveStateBus_Adr ),
@@ -1470,6 +1598,7 @@ module APU #(
 		.SaveStateBus_rst  (SaveStateBus_rst ),
 		.SaveStateBus_load (SaveStateBus_load ),
 		.SaveStateBus_Dout (SaveStateBus_wired_or[1])
+	// defparam blocks
 	);
 	defparam Dmc.SSREG_INDEX_DMC1 = SSREG_INDEX_DMC1;
 	defparam Dmc.SSREG_INDEX_DMC2 = SSREG_INDEX_DMC2;

@@ -68,6 +68,8 @@ module cart_top (
 	input             mapper_irq_pause, // Pause cycle-based mappers during OC extended Vblank
 	input       [1:0] overclock,      // Overclock mode (0=off, 1=turbo, 2=medium, 3=extreme)
 	input             smooth_audio,   // Smooth Audio option
+	input       [1:0] scale_mode,     // Force scale (Major or Minor)
+	input       [3:0] root_key,
 	// savestates              
 	input       [63:0]  SaveStateBus_Din,
 	input       [ 9:0]  SaveStateBus_Adr,
@@ -1561,6 +1563,8 @@ VRC1 vrc1(
 	.flags_out_b(flags_out_b),
 	.mapper_ce      (mapper_ce),
 	.smooth_audio   (smooth_audio),
+	.scale_mode		(scale_mode),
+	.root_key		(root_key),
 	.audio_in   (audio_in),
 	.audio_b    (audio_out_b),
 	// savestates
@@ -1602,6 +1606,8 @@ VRC3 vrc3(
 	.flags_out_b(flags_out_b),
 	.mapper_ce      (mapper_ce),
 	.smooth_audio   (smooth_audio),
+	.scale_mode		(scale_mode),
+	.root_key		(root_key),
 	.audio_in   (audio_in),
 	.audio_b    (audio_out_b),
 	// savestates
@@ -1643,6 +1649,8 @@ VRC24 vrc24(
 	.flags_out_b(flags_out_b),
 	.mapper_ce      (mapper_ce),
 	.smooth_audio   (smooth_audio),
+	.scale_mode		(scale_mode),
+	.root_key		(root_key),
 	.audio_in   (audio_in),
 	.audio_b    (audio_out_b),
 	// savestates
@@ -1684,6 +1692,8 @@ VRC5 vrc5(
 	.flags_out_b(flags_out_b),
 	.mapper_ce      (mapper_ce),
 	.smooth_audio   (smooth_audio),
+	.scale_mode		(scale_mode),
+	.root_key		(root_key),
 	.audio_in   (audio_in),
 	.audio_b    (audio_out_b),
 	// Special ports

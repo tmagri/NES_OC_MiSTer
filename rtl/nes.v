@@ -137,6 +137,8 @@ module NES(
 	input         smooth_audio,
 	input         smooth_noise,
 	input		  swap_duty,
+	input  [1:0]  scale_mode,
+	input  [3:0]  root_key,
 	output        apu_ce,
 	output        ppu_ce_out,
 	input         gg,
@@ -632,6 +634,8 @@ APU apu(
 	.smooth_audio   (smooth_audio),
 	.smooth_noise   (smooth_noise),
 	.swap_duty		(swap_duty),
+	.scale_mode		(scale_mode),
+	.root_key		(root_key),
 	// savestates
 	.SaveStateBus_Din  (SaveStateBus_Din ),
 	.SaveStateBus_Adr  (SaveStateBus_Adr ),

@@ -78,7 +78,7 @@ module emu
 	output        LED_USER,  // 1 - ON, 0 - OFF.
 
 	// b[1]: 0 - LED status is system status OR'd with b[0]
-	//       1 - LED status is controled solely by b[0]
+	//       1 - LED status is controlled solely by b[0]
 	// hint: supply 2'b00 to let the system control the LED.
 	output  [1:0] LED_POWER,
 	output  [1:0] LED_DISK,
@@ -264,6 +264,8 @@ parameter CONF_STR = {
 	"P1O[73],Smooth Triangle,Off,On;",
 	"P1O[77],Smooth Noise,Off,On;",
 	"P1O[75],Famiclone Duty Swap,Off,On;",
+	"P1O[81:80],Force Scale,Off,Major,Minor;",
+	"P1O[85:82],Song Root Key,C,C#,D,D#,E,F,F#,G,G#,A,A#,B;",
 	"P2,Input Options;",
 	"P2-;",
 	"P2O9,Swap Joysticks,No,Yes;",
@@ -1004,6 +1006,8 @@ NES nes (
 	.smooth_audio    (status[73]), // Use bit 73 for smoothing
 	.smooth_noise    (status[77]), // Noise envelope attack smoother
 	.swap_duty		 (status[75]), //famiclone swap 25 <-> 50
+	.scale_mode      (status[81:80]),
+	.root_key        (status[85:82]),
 	.apu_ce          (apu_ce),
 	// Video
 	.ex_sprites      (status[25]),
