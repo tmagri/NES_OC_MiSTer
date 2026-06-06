@@ -263,6 +263,7 @@ parameter CONF_STR = {
 	"P1O[74],Stereo,Off,On;",
 	"P1O[73],Smooth Triangle,Off,On;",
 	"P1O[77],Smooth Noise,Off,On;",
+	"P1O[75],Famiclone Duty Swap,Off,On;",
 	"P2,Input Options;",
 	"P2-;",
 	"P2O9,Swap Joysticks,No,Yes;",
@@ -1002,6 +1003,7 @@ NES nes (
 	.stereo_en       (stereo_en),
 	.smooth_audio    (status[73]), // Use bit 73 for smoothing
 	.smooth_noise    (status[77]), // Noise envelope attack smoother
+	.swap_duty		 (status[75]), //famiclone swap 25 <-> 50
 	.apu_ce          (apu_ce),
 	// Video
 	.ex_sprites      (status[25]),

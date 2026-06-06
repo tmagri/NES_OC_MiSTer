@@ -144,6 +144,7 @@ module SquareChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_SQ1) (
 	input  logic       Enabled,
 	output logic [3:0] Sample,
 	output logic       IsNonZero,
+	input logic 	   swap_duty,
 	// savestates
 	input       [63:0]  SaveStateBus_Din,
 	input       [ 9:0]  SaveStateBus_Adr,
@@ -178,6 +179,7 @@ module SquareChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_SQ1) (
 	logic lc;
 	logic DutyEnabledUsed;
 	logic DutyEnabled;
+	logic [1:0] adjusted_duty;
 
 	wire [9:0] SS_LEN_BACK, SS_LEN_IN;
 	wire [14:0] SS_ENV_BACK, SS_ENV_IN;
@@ -228,8 +230,15 @@ module SquareChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_SQ1) (
 	);
 
 	always_comb begin
-		// The wave forms nad barrel shifter are abstracted simply here
-		case (Duty)
+		// If swap_duty is active, invert the mapping of 25% and 50% duty cycles
+		adjusted_duty = Duty;
+		if (swap_duty) begin
+			if (Duty == 2'd1)      adjusted_duty = 2'd2; // 25% behaves like 50%
+			else if (Duty == 2'd2) adjusted_duty = 2'd1; // 50% behaves like 25%
+		end
+
+		// Waveforms mapped using the clone-adjusted duty
+		case (adjusted_duty)
 			0: DutyEnabled = (SeqPos == 7);
 			1: DutyEnabled = (SeqPos >= 6);
 			2: DutyEnabled = (SeqPos >= 4);
@@ -1162,8 +1171,9 @@ module APU #(
 	output logic        IRQ,            // IRQ asserted high == asserted
 	output logic        get_ce,         // Clock enable for a get cycle
 	output logic        put_ce,         // Clock enable for a put cycle
-	input  logic        smooth_audio,   // NEW
+	input  logic        smooth_audio,   // Smooth out quantisation noise in triagnle wave
 	input  logic        smooth_noise,   // Noise envelope attack smoother
+	input  logic        swap_duty,		// Famiclone duty swap 25 <-> 50
 	// savestates
 	input       [63:0]  SaveStateBus_Din,
 	input       [ 9:0]  SaveStateBus_Adr,
@@ -1334,6 +1344,7 @@ module APU #(
 		.Enabled      (Enabled[0]),
 		.Sample       (Sq1Sample),
 		.IsNonZero    (Sq1NonZero),
+		.swap_duty (swap_duty),
 		// savestates
 		.SaveStateBus_Din  (SaveStateBus_Din ),
 		.SaveStateBus_Adr  (SaveStateBus_Adr ),
@@ -1364,6 +1375,7 @@ module APU #(
 		.Enabled      (Enabled[1]),
 		.Sample       (Sq2Sample),
 		.IsNonZero    (Sq2NonZero),
+		.swap_duty (swap_duty),
 		// savestates
 		.SaveStateBus_Din  (SaveStateBus_Din ),
 		.SaveStateBus_Adr  (SaveStateBus_Adr ),
