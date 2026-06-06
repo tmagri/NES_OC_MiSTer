@@ -10,25 +10,34 @@ This is an FPGA implementation of the NES/Famicom based on [FPGANES](https://git
 
 A comprehensive suite of overclocking options designed to eliminate slowdowns while improving compatibility and stability across the NES library.
 
-* **Auto (Default):** Intelligently selects the best OC method based on the loaded game's mapper. It defaults to the highly stable Postrender method for most games, but automatically switches to VBlank Extension for specialized mappers (like Konami VRC and MMC5) that require strict hardware synchronization.
-* **Postrender Overclock:** Applies overclocking after the PPU’s render phase. Avoids CPU/PPU timing conflicts, especially around $2002 reads, reduces visual glitches, and improves frame pacing. Essential for eliminating lag in CPU-heavy games like *Kirby's Adventure*, *Final Fantasy III [J]*, and *Super Mario Bros 2 [FDS]*.
-* **VBlank Extension:** A CPU-only overclocking method that utilizes VBlank extension to increase CPU frequency while maintaining standard 60fps video and cycle-accurate audio. Required for games like *Parodius* and *Castlevania III [J]* which use strict cycle-counting IRQs and break if the NMI is delayed.
+* **Auto (Default):** Intelligently selects the best OC method based on the loaded game's mapper. It defaults to the highly stable Postrender method for most games, but automatically switches to VBlank Extension for specialised mappers (like Konami VRC and MMC5) that require strict hardware synchronisation.
+* **Postrender Overclock:** Applies overclocking after the PPU’s render phase. Avoids CPU/PPU timing conflicts, especially around $2002 reads, reduces visual glitches, and improves frame pacing. Essential for eliminating lag in CPU-heavy games like *Kirby's Adventure*, *Final Fantasy III \[J\]*, and *Super Mario Bros 2 \[FDS\]*.
+
+* **VBlank Extension:** A CPU-only overclocking method that utilizes VBlank extension to increase CPU frequency while maintaining standard 60fps video and cycle-accurate audio. Required for games like *Parodius* and *Castlevania III \[J\]* which use strict cycle-counting IRQs and break if the NMI is delayed.
 
 **Performance Modes:**
 
 * **Medium (1.50×) Mode:** A stable intermediate performance boost using dynamic PPU clocking and anti-jitter logic. Ideal and recommended for most games.
-* **Extreme (100%) Mode:** Doubles the CPU speed. Uses a dedicated 1.78MHz mapper clock for proper cycle synchronization to preserve compatibility with complex mappers. Not recommended for most games.
+
+* **Extreme (2.00×) Mode:** Doubles the CPU speed (2x baseline performance). Uses a dedicated 1.78MHz mapper clock for proper cycle synchronisation to preserve compatibility with complex mappers. Recommended for simple games (non complex mapper use).
+
 * **APU Pitch Correction:** Dynamically scales expansion audio. Ensures that mappers with internal sound hardware (like VRC6/VRC7) maintain their original pitch and timing during overclocked gameplay.
 
 ### **High-Fidelity Stereo Audio Overhaul**
 
 True Stereo Sound implemented with high-quality separation (enable "Stereo Mix" in OSD):
 
-* **Left Channel:** Pulse 1, Triangle, and DMC.  
-* **Right Channel:** Pulse 2, Noise, and DMC.  
-* **Unified Mixing Logic:** Fixed "loud and clipping" audio in Mono mode by implementing a unified internal downmixing pipeline. Mono and Stereo now share the same gain structure and expansion audio balance.  
+* ***Left Channel:** Pulse 1, Triangle, and DMC.
+
+* **Right Channel:** Pulse 2, Noise, and DMC.
+
+* **Unified Mixing Logic:** Fixed "loud and clipping" audio in Mono mode by implementing a unified internal downmixing pipeline. Mono and Stereo now share the same gain structure and expansion audio balance.
+
 * **Smooth Triangle (Pure Triangle/Sawtooth):** An optional audio‑interpolation system that smooths the NES’s stepped triangle and sawtooth‑like waveforms. It reduces digital harshness, aliasing, and stair‑step artifacts—especially noticeable when overclocking—while preserving accurate pitch and timing. The reduced bass may affect nostalgia or fondness for the original NES sound for some users.
+
 * **Smooth Noise:** A togglable low-pass filter within the audio pipeline to mitigate harsh "pop" and transient artifacts in the NES noise channel.
+
+* **Famiclone Duty Swap:** Replicates a classic audio hardware hardware quirk found on many Famicom clone consoles ("Famiclones"). When active, it swaps the 25% and 50% pulse wave duty cycles on the square channels, accurately reproducing the altered music and sound effect timbres unique to clone hardware.
 
 ### **Epileptic‑Friendly Filter (Temporal Frame Blending)**
 
