@@ -147,6 +147,8 @@ module SquareChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_SQ1) (
 	input logic 	   swap_duty,
 	input logic [1:0]  scale_mode,     // 00=Off, 01=Force Major Scale, 10=Force Minor Scale
 	input logic [3:0]  root_key,       // 0=C, 1=C#, 2=D, ... 11=B
+	output logic [3:0] raw_note,
+	output logic       is_active,
 	// savestates
 	input       [63:0]  SaveStateBus_Din,
 	input       [ 9:0]  SaveStateBus_Adr,
@@ -195,11 +197,13 @@ module SquareChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_SQ1) (
 	assign ShiftedPeriod = (Period >> SweepShift);
 	assign PeriodRhs = (SweepNegate ? (~ShiftedPeriod + {10'b0, sq2}) : ShiftedPeriod);
 	assign NewSweepPeriod = Period + PeriodRhs;
-	assign subunit_write = (Addr == 0 || Addr == 3) & write;
 	assign IsNonZero = lc;
-
+	assign subunit_write = (Addr == 0 || Addr == 3) & write;
 	assign ValidFreq = (MMC5 && allow_us) || ((|Period[10:3]) && (SweepNegate || ~NewSweepPeriod[11]));
 	assign Sample = (~lc | ~ValidFreq | ~DutyEnabledUsed) ? 4'd0 : Envelope;
+	
+	assign raw_note = current_note;
+	assign is_active = (Sample > 4'd0);
 
 	LenCounterUnit LenSq (
 		.clk            (clk),
@@ -249,6 +253,8 @@ module SquareChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_SQ1) (
 	end
 
 	// --- Musical Auto-Tune System ---
+	logic [1:0] latched_scale_mode;
+	logic [3:0] latched_root_key;
 	logic [10:0] norm_period;
 	logic [2:0]  shift_amt;
 	logic        shift_dir; // 0 = Shift Left (High Pitch), 1 = Shift Right (Low Pitch)
@@ -282,45 +288,45 @@ module SquareChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_SQ1) (
 
 	// 2. Decode the raw normalised period into an absolute semitone note index
 	logic [3:0] current_note; // 0=C, 1=C#, 2=D, ... 11=B
+	logic is_sharp; // 1 if closer to the next note up, 0 if closer to the note down
 	always_comb begin
-		if      (norm_period >= 11'd415) current_note = 4'd0;  // C
-		else if (norm_period >= 11'd391) current_note = 4'd1;  // C#
-		else if (norm_period >= 11'd369) current_note = 4'd2;  // D
-		else if (norm_period >= 11'd348) current_note = 4'd3;  // D#
-		else if (norm_period >= 11'd328) current_note = 4'd4;  // E
-		else if (norm_period >= 11'd310) current_note = 4'd5;  // F
-		else if (norm_period >= 11'd292) current_note = 4'd6;  // F#
-		else if (norm_period >= 11'd275) current_note = 4'd7;  // G
-		else if (norm_period >= 11'd260) current_note = 4'd8;  // G#
-		else if (norm_period >= 11'd246) current_note = 4'd9;  // A
-		else if (norm_period >= 11'd232) current_note = 4'd10; // A#
-		else                             current_note = 4'd11; // B
+		if      (norm_period >= 11'd415) begin current_note = 4'd0;  is_sharp = (norm_period <= 11'd421); end // C
+		else if (norm_period >= 11'd391) begin current_note = 4'd1;  is_sharp = (norm_period <= 11'd403); end // C#
+		else if (norm_period >= 11'd369) begin current_note = 4'd2;  is_sharp = (norm_period <= 11'd380); end // D
+		else if (norm_period >= 11'd348) begin current_note = 4'd3;  is_sharp = (norm_period <= 11'd358); end // D#
+		else if (norm_period >= 11'd328) begin current_note = 4'd4;  is_sharp = (norm_period <= 11'd338); end // E
+		else if (norm_period >= 11'd310) begin current_note = 4'd5;  is_sharp = (norm_period <= 11'd319); end // F
+		else if (norm_period >= 11'd292) begin current_note = 4'd6;  is_sharp = (norm_period <= 11'd301); end // F#
+		else if (norm_period >= 11'd275) begin current_note = 4'd7;  is_sharp = (norm_period <= 11'd283); end // G
+		else if (norm_period >= 11'd260) begin current_note = 4'd8;  is_sharp = (norm_period <= 11'd267); end // G#
+		else if (norm_period >= 11'd246) begin current_note = 4'd9;  is_sharp = (norm_period <= 11'd253); end // A
+		else if (norm_period >= 11'd232) begin current_note = 4'd10; is_sharp = (norm_period <= 11'd239); end // A#
+		else                             begin current_note = 4'd11; is_sharp = (norm_period <= 11'd228); end // B
 	end
 
 	// 3. Find the current note's interval distance relative to our OSD song root key
 	logic [3:0] interval;
-	assign interval = (current_note >= root_key) ? (current_note - root_key) : (current_note + 4'd12 - root_key);
-
+	assign interval = (current_note >= latched_root_key) ? (current_note - latched_root_key) : (current_note + 4'd12 - latched_root_key);
 	// 4. Force/snap illegal intervals into strict Major or Minor interval alignments
 	logic [3:0] snapped_interval;
 	always_comb begin
 		snapped_interval = interval;
-		if (scale_mode == 2'd1) begin // FORCE MAJOR KEY
+		if (latched_scale_mode == 2'd1) begin // FORCE MAJOR KEY
 			case (interval)
-				4'd1:  snapped_interval = 4'd0;  // Flat 2nd -> Root
-				4'd3:  snapped_interval = 4'd4;  // Minor 3rd -> Major 3rd! (The funniest transformation)
-				4'd6:  snapped_interval = 4'd5;  // Tritone -> Perfect 4th
-				4'd8:  snapped_interval = 4'd9;  // Minor 6th -> Major 6th
-				4'd10: snapped_interval = 4'd11; // Minor 7th -> Major 7th
+				4'd1:  snapped_interval = is_sharp ? 4'd2 : 4'd0;  // m2 -> M2 or Root
+				4'd3:  snapped_interval = is_sharp ? 4'd4 : 4'd2;  // m3 -> M3 or M2
+				4'd6:  snapped_interval = is_sharp ? 4'd7 : 4'd5;  // Tritone -> P5 or P4
+				4'd8:  snapped_interval = is_sharp ? 4'd9 : 4'd7;  // m6 -> M6 or P5
+				4'd10: snapped_interval = is_sharp ? 4'd11 : 4'd9; // m7 -> M7 or M6
 				default: snapped_interval = interval;
 			endcase
-		end else if (scale_mode == 2'd2) begin // FORCE MINOR KEY
+		end else if (latched_scale_mode == 2'd2) begin // FORCE MINOR KEY
 			case (interval)
-				4'd1:  snapped_interval = 4'd0;  // Flat 2nd -> Root
-				4'd4:  snapped_interval = 4'd3;  // Major 3rd -> Minor 3rd! (Instantly makes songs moody)
-				4'd6:  snapped_interval = 4'd5;  // Tritone -> Perfect 4th
-				4'd9:  snapped_interval = 4'd8;  // Major 6th -> Minor 6th
-				4'd11: snapped_interval = 4'd10; // Major 7th -> Minor 7th
+				4'd1:  snapped_interval = is_sharp ? 4'd2 : 4'd0;  // m2 -> M2 or Root
+				4'd4:  snapped_interval = is_sharp ? 4'd5 : 4'd3;  // M3 -> P4 or m3
+				4'd6:  snapped_interval = is_sharp ? 4'd7 : 4'd5;  // Tritone -> P5 or P4
+				4'd9:  snapped_interval = is_sharp ? 4'd10 : 4'd8; // M6 -> m7 or m6
+				// We leave 4'd11 (M7) as 11 to support Harmonic Minor melodies
 				default: snapped_interval = interval;
 			endcase
 		end
@@ -330,7 +336,7 @@ module SquareChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_SQ1) (
 	logic [4:0] temp_note;
 	logic [3:0] snapped_note;
 	always_comb begin
-		temp_note = {1'b0, root_key} + {1'b0, snapped_interval};
+		temp_note = {1'b0, latched_root_key} + {1'b0, snapped_interval};
 		if (temp_note >= 5'd12) snapped_note = temp_note[3:0] - 4'd12;
 		else                    snapped_note = temp_note[3:0];
 	end
@@ -355,16 +361,34 @@ module SquareChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_SQ1) (
 		endcase
 	end
 
+	// 6.5 Octave Boundary Correction
+	// If snapping caused the note to wrap around the C boundary (e.g., B up to C, or C down to B),
+	// we must halve or double the base period to prevent it from jumping to the wrong octave.
+	logic [10:0] octave_corrected_base;
+	always_comb begin
+		if (current_note >= 4'd9 && snapped_note <= 4'd2) begin
+			// Snapped UP across the octave boundary (e.g., A#/B -> C/C#)
+			// Pitch needs to go UP, so period must be HALVED
+			octave_corrected_base = snapped_base_period >> 1;
+		end else if (current_note <= 4'd2 && snapped_note >= 4'd9) begin
+			// Snapped DOWN across the octave boundary (e.g., C/C# -> A#/B)
+			// Pitch needs to go DOWN, so period must be DOUBLED
+			octave_corrected_base = snapped_base_period << 1;
+		end else begin
+			octave_corrected_base = snapped_base_period;
+		end
+	end
+
 	// 7. De-normalise the snapped base period back to its original target octave range
 	logic [10:0] snapped_period;
 	always_comb begin
-		if (scale_mode == 2'd0) begin
+		if (latched_scale_mode == 2'd0) begin
 			snapped_period = Period;
 		end else begin
 			if (shift_dir == 1'b1)
-				snapped_period = snapped_base_period << shift_amt;
+				snapped_period = octave_corrected_base << shift_amt;
 			else
-				snapped_period = snapped_base_period >> shift_amt;
+				snapped_period = octave_corrected_base >> shift_amt;
 		end
 	end
 
@@ -408,6 +432,8 @@ module SquareChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_SQ1) (
 				3: begin
 					Period[10:8] <= DIN[2:0];
 					SeqPos <= 0;
+					latched_scale_mode <= scale_mode; // <-- Latch the scale here
+					latched_root_key <= root_key;     // <-- Latch the root key here
 				end
 			endcase
 		end
@@ -423,6 +449,10 @@ module SquareChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_SQ1) (
 			SeqPos       <= SS[34:32]; // 0;
 			SweepDivider <= SS[37:35]; // 0;
 			SweepReset   <= SS[38];    // 0;
+
+			// Adopt live values immediately on reset or savestate load
+			latched_scale_mode <= scale_mode;
+			latched_root_key <= root_key;
 		end
 	end
 
@@ -444,8 +474,12 @@ module TriangleChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_TRI, paramet
 	input  logic       LinCtr_Clock,
 	input  logic       Enabled,
 	input  logic       smooth_audio,
+	input  logic [1:0] scale_mode,
+	input  logic [3:0] root_key,
 	output logic [11:0] Sample,
 	output logic       IsNonZero,
+	output logic [3:0] raw_note,
+	output logic       is_active,
 	// savestates
 	input       [63:0]  SaveStateBus_Din,
 	input       [ 9:0]  SaveStateBus_Adr,
@@ -569,8 +603,8 @@ module TriangleChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_TRI, paramet
 	always_ff @(posedge clk) begin
 		if (phi1) begin
 			if (TimerCtr == 0) begin
-				TimerCtr <= Period;
-				applied_period <= Period;
+				TimerCtr <= snapped_period;
+				applied_period <= snapped_period;
 				if (IsNonZero & ~LinCtrZero) begin
 					SeqPos <= SeqPos + 1'd1;
 					smooth_acc <= lookahead_Y_full;
@@ -626,6 +660,8 @@ module TriangleChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_TRI, paramet
 				3: begin
 					Period[10:8] <= DIN[2:0];
 					line_reload <= 1;
+					latched_scale_mode <= scale_mode; 
+					latched_root_key <= root_key;    
 				end
 			endcase
 		end
@@ -645,6 +681,9 @@ module TriangleChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_TRI, paramet
 			err_acc        <= SS_B[36:23];
 			sample_latch   <= SS_B[48:37];
 
+			latched_scale_mode <= scale_mode;
+			latched_root_key <= root_key;
+
 			if (cold_reset) begin
 				sample_latch <= 12'hF00;
 				Period <= 0;
@@ -661,6 +700,148 @@ module TriangleChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_TRI, paramet
 
 		if (applied_period > 1) sample_latch <= Sample;
 	end
+
+	// --- Musical Auto-Tune System ---
+	logic [1:0] latched_scale_mode;
+	logic [3:0] latched_root_key;
+	logic [10:0] norm_period;
+	logic [2:0]  shift_amt;
+	logic        shift_dir; // 0 = Shift Left (High Pitch), 1 = Shift Right (Low Pitch)
+	
+	always_comb begin
+		norm_period = Period;
+		shift_amt   = 3'd0;
+		shift_dir   = 1'b0;
+		
+		if (Period >= 11'd1704) begin
+			norm_period = Period >> 3; shift_amt = 3'd3; shift_dir = 1'b1;
+		end else if (Period >= 11'd852) begin
+			norm_period = Period >> 2; shift_amt = 3'd2; shift_dir = 1'b1;
+		end else if (Period >= 11'd426) begin
+			norm_period = Period >> 1; shift_amt = 3'd1; shift_dir = 1'b1;
+		end else if (Period >= 11'd213) begin
+			norm_period = Period;      shift_amt = 3'd0; shift_dir = 1'b0;
+		end else if (Period >= 11'd106) begin
+			norm_period = Period << 1; shift_amt = 3'd1; shift_dir = 1'b0;
+		end else if (Period >= 11'd53) begin
+			norm_period = Period << 2; shift_amt = 3'd2; shift_dir = 1'b0;
+		end else if (Period >= 11'd26) begin
+			norm_period = Period << 3; shift_amt = 3'd3; shift_dir = 1'b0;
+		end else if (Period >= 11'd13) begin
+			norm_period = Period << 4; shift_amt = 3'd4; shift_dir = 1'b0;
+		end else begin
+			norm_period = Period << 5; shift_amt = 3'd5; shift_dir = 1'b0;
+		end
+	end
+
+	logic [3:0] current_note; // 0=C, 1=C#, 2=D, ... 11=B
+	logic is_sharp; // 1 if closer to the next note up, 0 if closer to the note down
+	always_comb begin
+		if      (norm_period >= 11'd415) begin current_note = 4'd0;  is_sharp = (norm_period <= 11'd421); end // C
+		else if (norm_period >= 11'd391) begin current_note = 4'd1;  is_sharp = (norm_period <= 11'd403); end // C#
+		else if (norm_period >= 11'd369) begin current_note = 4'd2;  is_sharp = (norm_period <= 11'd380); end // D
+		else if (norm_period >= 11'd348) begin current_note = 4'd3;  is_sharp = (norm_period <= 11'd358); end // D#
+		else if (norm_period >= 11'd328) begin current_note = 4'd4;  is_sharp = (norm_period <= 11'd338); end // E
+		else if (norm_period >= 11'd310) begin current_note = 4'd5;  is_sharp = (norm_period <= 11'd319); end // F
+		else if (norm_period >= 11'd292) begin current_note = 4'd6;  is_sharp = (norm_period <= 11'd301); end // F#
+		else if (norm_period >= 11'd275) begin current_note = 4'd7;  is_sharp = (norm_period <= 11'd283); end // G
+		else if (norm_period >= 11'd260) begin current_note = 4'd8;  is_sharp = (norm_period <= 11'd267); end // G#
+		else if (norm_period >= 11'd246) begin current_note = 4'd9;  is_sharp = (norm_period <= 11'd253); end // A
+		else if (norm_period >= 11'd232) begin current_note = 4'd10; is_sharp = (norm_period <= 11'd239); end // A#
+		else                             begin current_note = 4'd11; is_sharp = (norm_period <= 11'd228); end // B
+	end
+
+	// 3. Find the current note's interval distance relative to our OSD song root key
+	logic [3:0] interval;
+	assign interval = (current_note >= latched_root_key) ? (current_note - latched_root_key) : (current_note + 4'd12 - latched_root_key);
+
+	// 4. Force/snap illegal intervals into strict Major or Minor interval alignments
+	logic [3:0] snapped_interval;
+	always_comb begin
+		snapped_interval = interval;
+		if (latched_scale_mode == 2'd1) begin // FORCE MAJOR KEY
+			case (interval)
+				4'd1:  snapped_interval = is_sharp ? 4'd2 : 4'd0;  // m2 -> M2 or Root
+				4'd3:  snapped_interval = is_sharp ? 4'd4 : 4'd2;  // m3 -> M3 or M2
+				4'd6:  snapped_interval = is_sharp ? 4'd7 : 4'd5;  // Tritone -> P5 or P4
+				4'd8:  snapped_interval = is_sharp ? 4'd9 : 4'd7;  // m6 -> M6 or P5
+				4'd10: snapped_interval = is_sharp ? 4'd11 : 4'd9; // m7 -> M7 or M6
+				default: snapped_interval = interval;
+			endcase
+		end else if (latched_scale_mode == 2'd2) begin // FORCE MINOR KEY
+			case (interval)
+				4'd1:  snapped_interval = is_sharp ? 4'd2 : 4'd0;  // m2 -> M2 or Root
+				4'd4:  snapped_interval = is_sharp ? 4'd5 : 4'd3;  // M3 -> P4 or m3
+				4'd6:  snapped_interval = is_sharp ? 4'd7 : 4'd5;  // Tritone -> P5 or P4
+				4'd9:  snapped_interval = is_sharp ? 4'd10 : 4'd8; // M6 -> m7 or m6
+				// We leave 4'd11 (M7) as 11 to support Harmonic Minor melodies
+				default: snapped_interval = interval;
+			endcase
+		end
+	end
+
+	// 5. Compute the absolute snapped target note index (Optimised to avoid divider hardware)
+	logic [4:0] temp_note;
+	logic [3:0] snapped_note;
+	always_comb begin
+		temp_note = {1'b0, latched_root_key} + {1'b0, snapped_interval};
+		if (temp_note >= 5'd12) snapped_note = temp_note[3:0] - 4'd12;
+		else                    snapped_note = temp_note[3:0];
+	end
+
+	// 6. Pull the ideal baseline period value for the snapped note
+	logic [10:0] snapped_base_period;
+	always_comb begin
+		case (snapped_note)
+			4'd0:  snapped_base_period = 11'd427; // C
+			4'd1:  snapped_base_period = 11'd403; // C#
+			4'd2:  snapped_base_period = 11'd380; // D
+			4'd3:  snapped_base_period = 11'd358; // D#
+			4'd4:  snapped_base_period = 11'd338; // E
+			4'd5:  snapped_base_period = 11'd319; // F
+			4'd6:  snapped_base_period = 11'd301; // F#
+			4'd7:  snapped_base_period = 11'd283; // G
+			4'd8:  snapped_base_period = 11'd267; // G#
+			4'd9:  snapped_base_period = 11'd253; // A
+			4'd10: snapped_base_period = 11'd239; // A#
+			4'd11: snapped_base_period = 11'd225; // B
+			default: snapped_base_period = 11'd427;
+		endcase
+	end
+
+	// 6.5 Octave Boundary Correction
+	// If snapping caused the note to wrap around the C boundary (e.g., B up to C, or C down to B),
+	// we must halve or double the base period to prevent it from jumping to the wrong octave.
+	logic [10:0] octave_corrected_base;
+	always_comb begin
+		if (current_note >= 4'd9 && snapped_note <= 4'd2) begin
+			// Snapped UP across the octave boundary (e.g., A#/B -> C/C#)
+			// Pitch needs to go UP, so period must be HALVED
+			octave_corrected_base = snapped_base_period >> 1;
+		end else if (current_note <= 4'd2 && snapped_note >= 4'd9) begin
+			// Snapped DOWN across the octave boundary (e.g., C/C# -> A#/B)
+			// Pitch needs to go DOWN, so period must be DOUBLED
+			octave_corrected_base = snapped_base_period << 1;
+		end else begin
+			octave_corrected_base = snapped_base_period;
+		end
+	end
+
+	// 7. De-normalise the snapped base period back to its original target octave range
+	logic [10:0] snapped_period;
+	always_comb begin
+		if (latched_scale_mode == 2'd0) begin
+			snapped_period = Period;
+		end else begin
+			if (shift_dir == 1'b1)
+				snapped_period = octave_corrected_base << shift_amt;
+			else
+				snapped_period = octave_corrected_base >> shift_amt;
+		end
+	end
+
+	assign raw_note = current_note;
+	assign is_active = (IsNonZero && ~LinCtrZero && applied_period > 1);
 
 endmodule
 
@@ -1298,6 +1479,8 @@ module APU #(
 	input  logic        swap_duty,		// Famiclone duty swap 25 <-> 50
 	input  logic [1:0]  scale_mode,     // 00=Off, 01=Major Key, 10=Minor Key
 	input  logic [3:0]  root_key,       // 0=C, 1=C#, 2=D, ... 11=B
+	output logic [3:0]  detected_key,   // Exported dynamic key
+	output logic        native_is_minor,// Exported native scale
 	// savestates
 	input       [63:0]  SaveStateBus_Din,
 	input       [ 9:0]  SaveStateBus_Adr,
@@ -1441,6 +1624,26 @@ module APU #(
 	assign ClkE = (frame_quarter & aclk1_delayed);
 	assign ClkL = (frame_half & aclk1_delayed);
 
+	logic [3:0] sq1_raw_note, sq2_raw_note, tri_raw_note;
+	logic sq1_active, sq2_active, tri_active;
+	logic [3:0] dynamic_root_key;
+
+	AutoKeyDetector key_tracker (
+		.clk(clk),
+		.ce(ce),
+		.frame_tick(ClkE), // Tick using the envelope clock event
+		.note_1(sq1_raw_note),
+		.active_1(sq1_active),
+		.note_2(sq2_raw_note),
+		.active_2(sq2_active),
+		.note_3(tri_raw_note),
+		.active_3(tri_active),
+		.auto_root(detected_key),
+		.native_is_minor(native_is_minor)
+	);
+
+	assign dynamic_root_key = detected_key;
+
 	// Generate bus output
 	assign DOUT = {DmcIrq, irq_flag, 1'b0, IsDmcActive, NoiNonZero, TriNonZero,
 		Sq2NonZero, Sq1NonZero};
@@ -1470,7 +1673,9 @@ module APU #(
 		.IsNonZero    (Sq1NonZero),
 		.swap_duty    (swap_duty),
 		.scale_mode   (scale_mode),
-		.root_key     (root_key),
+		.root_key     (dynamic_root_key), // Replaced static OSD key!
+		.raw_note     (sq1_raw_note),
+		.is_active    (sq1_active),
 		// savestates
 		.SaveStateBus_Din  (SaveStateBus_Din ),
 		.SaveStateBus_Adr  (SaveStateBus_Adr ),
@@ -1503,7 +1708,9 @@ module APU #(
 		.IsNonZero    (Sq2NonZero),
 		.swap_duty    (swap_duty),
 		.scale_mode   (scale_mode),
-		.root_key     (root_key),
+		.root_key     (dynamic_root_key),
+		.raw_note     (sq2_raw_note),
+		.is_active    (sq2_active),
 		// savestates
 		.SaveStateBus_Din  (SaveStateBus_Din ),
 		.SaveStateBus_Adr  (SaveStateBus_Adr ),
@@ -1530,8 +1737,12 @@ module APU #(
 		.LinCtr_Clock (ClkE),
 		.Enabled      (Enabled[2]),
 		.smooth_audio (smooth_audio),
+		.scale_mode   (scale_mode),
+		.root_key     (dynamic_root_key),
 		.Sample       (TriSample),
 		.IsNonZero    (TriNonZero),
+		.raw_note     (tri_raw_note),
+		.is_active    (tri_active),
 		// savestates
 		.SaveStateBus_Din  (SaveStateBus_Din ),
 		.SaveStateBus_Adr  (SaveStateBus_Adr ),
@@ -1831,4 +2042,87 @@ wire [15:0] val_base_old = mix_lut[mix_base_old];
 wire [15:0] tnd_out = smooth_audio ? tnd_smooth : val_base_old;
 
 assign sample = pulse_lut[sq_sum] + tnd_out;
+endmodule
+
+module AutoKeyDetector (
+    input  logic        clk,
+    input  logic        ce,          
+    input  logic        frame_tick,  
+    input  logic [3:0]  note_1,      
+    input  logic        active_1,    
+    input  logic [3:0]  note_2,      
+    input  logic        active_2,
+    input  logic [3:0]  note_3,      
+    input  logic        active_3,
+    output logic [3:0]  auto_root,    
+    output logic        native_is_minor
+);
+
+    logic [15:0] note_hist [0:11];
+    logic [3:0] max_idx;
+    logic [15:0] max_val;
+    logic [3:0] stable_root = 0;
+
+    assign auto_root = stable_root;
+
+	// --- Native Scale Detection ---
+    // Compare the Minor 3rd (Root + 3) against the Major 3rd (Root + 4)
+    logic [3:0] min_3rd_idx;
+    logic [3:0] maj_3rd_idx;
+    assign min_3rd_idx = (stable_root >= 4'd9) ? (stable_root - 4'd9) : (stable_root + 4'd3);
+    assign maj_3rd_idx = (stable_root >= 4'd8) ? (stable_root - 4'd8) : (stable_root + 4'd4);
+    
+    always_ff @(posedge clk) begin
+        if (frame_tick) begin
+            // Hysteresis margin to prevent erratic Major/Minor flipping
+            if (note_hist[min_3rd_idx] > (note_hist[maj_3rd_idx] + 16'd4096)) begin
+                native_is_minor <= 1'b1;
+            end else if (note_hist[maj_3rd_idx] > (note_hist[min_3rd_idx] + 16'd4096)) begin
+                native_is_minor <= 1'b0;
+            end
+        end
+    end
+
+    // --- Find Maximum Bin ---
+    always_comb begin
+        max_val = 0;
+        max_idx = 0;
+        for (int i = 0; i < 12; i++) begin
+            if (note_hist[i] > max_val) begin
+                max_val = note_hist[i];
+                max_idx = i[3:0];
+            end
+        end
+    end
+
+    // --- Accumulate and Decay ---
+    always_ff @(posedge clk) begin
+        if (frame_tick) begin
+            // Hysteresis margin
+            if (max_val > (note_hist[stable_root] + 16'd4096)) begin
+                stable_root <= max_idx;
+            end
+
+            for (int i = 0; i < 12; i++) begin
+                logic [16:0] next_val;
+                next_val = note_hist[i] - (note_hist[i] >> 8);
+
+                if (active_1 && note_1 == i[3:0]) begin
+                    next_val = next_val + 17'd64;  // Square 1: Normal Weight
+                end
+                if (active_2 && note_2 == i[3:0]) begin
+                    next_val = next_val + 17'd64;  // Square 2: Normal Weight
+                end
+                if (active_3 && note_3 == i[3:0]) begin
+                    next_val = next_val + 17'd256; // Triangle (Bass): 4x Weight!
+                end
+                
+                if (next_val > 17'hF000) begin
+                    next_val = 17'hF000;
+                end
+                
+                note_hist[i] <= next_val[15:0];
+            end
+        end
+    end
 endmodule

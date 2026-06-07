@@ -139,6 +139,8 @@ module NES(
 	input		  swap_duty,
 	input  [1:0]  scale_mode,
 	input  [3:0]  root_key,
+	output [3:0]  detected_key,
+	output        native_is_minor,
 	output        apu_ce,
 	output        ppu_ce_out,
 	input         gg,
@@ -636,6 +638,8 @@ APU apu(
 	.swap_duty		(swap_duty),
 	.scale_mode		(scale_mode),
 	.root_key		(root_key),
+	.detected_key   (detected_key),
+	.native_is_minor(native_is_minor),
 	// savestates
 	.SaveStateBus_Din  (SaveStateBus_Din ),
 	.SaveStateBus_Adr  (SaveStateBus_Adr ),
@@ -797,9 +801,11 @@ cart_top multi_mapper (
 	.audio             (sample_ext),              // Mixed audio output from cart
 	.mapper_irq_pause  (mapper_irq_pause),        // Pause cycle-based mappers during OC extended Vblank
 	.mapper_ce         (mapper_ce),               // Always runs at unoverclocked 1.78MHz
-	.put_ce            (put_ce),                  // Pass phase-aligned CE for expansion audio
-	.overclock         (overclock_latched),        // use latched value so savestate restores correct pitch
+	.put_ce            (put_ce),   				  // Pass phase-aligned CE for expansion audio
+	.overclock         (overclock_latched),       // use latched value so savestate restores correct pitch
 	.smooth_audio      (smooth_audio),            // Option toggle
+	.scale_mode        (scale_mode),              // Force scale
+	.root_key          (root_key),                // Synced dynamic root key
 	// SDRAM Communication
 	.prg_aout          (prg_linaddr),             // SDRAM adjusted PRG RAM address
 	.prg_allow         (prg_allow),               // Simulates internal CE/Locking

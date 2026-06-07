@@ -265,7 +265,7 @@ parameter CONF_STR = {
 	"P1O[77],Smooth Noise,Off,On;",
 	"P1O[75],Famiclone Duty Swap,Off,On;",
 	"P1O[81:80],Force Scale,Off,Major,Minor;",
-	"P1O[85:82],Song Root Key,C,C#,D,D#,E,F,F#,G,G#,A,A#,B;",
+	"P1O[85:82],Song Root Key,Auto,C,C#,D,D#,E,F,F#,G,G#,A,A#,B;",
 	"P2,Input Options;",
 	"P2-;",
 	"P2O9,Swap Joysticks,No,Yes;",
@@ -974,6 +974,21 @@ wire selected_oc_method =
 	(status[79:78] == 2'd1) ? 1'b1 : // Postrender
 	1'b0;                            // VBlank
 
+wire [3:0] auto_detected_key;
+wire       native_is_minor;
+
+wire [3:0] osd_root_key = status[85:82];
+wire [3:0] active_root_key = (osd_root_key == 4'd0) ? auto_detected_key : (osd_root_key - 4'd1);
+
+wire [1:0] osd_scale_mode = status[81:80];
+
+// --- Smart Bypass Heuristic ---
+// If the user forces Major (1) but the track is natively Major (0), bypass (0).
+// If the user forces Minor (2) but the track is natively Minor (1), bypass (0).
+wire [1:0] active_scale_mode = (osd_scale_mode == 2'd1 && !native_is_minor) ? 2'd0 :
+                               (osd_scale_mode == 2'd2 && native_is_minor)  ? 2'd0 :
+                               osd_scale_mode;
+
 NES nes (
 	.clk             (clk),
 	.reset_nes       (reset_nes),
@@ -1006,8 +1021,10 @@ NES nes (
 	.smooth_audio    (status[73]), // Use bit 73 for smoothing
 	.smooth_noise    (status[77]), // Noise envelope attack smoother
 	.swap_duty		 (status[75]), //famiclone swap 25 <-> 50
-	.scale_mode      (status[81:80]),
-	.root_key        (status[85:82]),
+	.scale_mode      (active_scale_mode),
+	.root_key        (active_root_key),
+	.detected_key    (auto_detected_key),
+	.native_is_minor (native_is_minor),
 	.apu_ce          (apu_ce),
 	// Video
 	.ex_sprites      (status[25]),
