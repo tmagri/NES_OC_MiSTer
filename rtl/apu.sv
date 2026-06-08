@@ -1628,10 +1628,14 @@ module APU #(
 	logic sq1_active, sq2_active, tri_active;
 	logic [3:0] dynamic_root_key;
 
+	// Detect when games write 0x00 to $4015 (Universal "Stop All Sound" command before a new track)
+	logic bgm_reset;
+	assign bgm_reset = (ApuMW5 && write && ADDR[1:0] == 1 && DIN[4:0] == 5'b00000);
+
 	AutoKeyDetector key_tracker (
 		.clk(clk),
 		.ce(ce),
-		.frame_tick(ClkE), // Tick using the envelope clock event
+		.frame_tick(ClkE), 
 		.note_1(sq1_raw_note),
 		.active_1(sq1_active),
 		.note_2(sq2_raw_note),
@@ -1639,7 +1643,8 @@ module APU #(
 		.note_3(tri_raw_note),
 		.active_3(tri_active),
 		.auto_root(detected_key),
-		.native_is_minor(native_is_minor)
+		.native_is_minor(native_is_minor),
+		.bgm_reset(bgm_reset)
 	);
 
 	assign dynamic_root_key = detected_key;
@@ -2054,30 +2059,32 @@ module AutoKeyDetector (
     input  logic        active_2,
     input  logic [3:0]  note_3,      
     input  logic        active_3,
+    input  logic        bgm_reset,    // <-- Hardware track reset flag
     output logic [3:0]  auto_root,    
-    output logic        native_is_minor
+    output logic        native_is_minor = 1'b0
 );
-
-    logic [15:0] note_hist [0:11];
+    // Upgraded to 20-bit memory for long-term phrase retention
+    logic [19:0] note_hist [0:11];
     logic [3:0] max_idx;
-    logic [15:0] max_val;
+    logic [19:0] max_val;
     logic [3:0] stable_root = 0;
 
     assign auto_root = stable_root;
 
-	// --- Native Scale Detection ---
-    // Compare the Minor 3rd (Root + 3) against the Major 3rd (Root + 4)
+    // --- Native Scale Detection ---
     logic [3:0] min_3rd_idx;
     logic [3:0] maj_3rd_idx;
     assign min_3rd_idx = (stable_root >= 4'd9) ? (stable_root - 4'd9) : (stable_root + 4'd3);
     assign maj_3rd_idx = (stable_root >= 4'd8) ? (stable_root - 4'd8) : (stable_root + 4'd4);
-    
+
     always_ff @(posedge clk) begin
-        if (frame_tick) begin
-            // Hysteresis margin to prevent erratic Major/Minor flipping
-            if (note_hist[min_3rd_idx] > (note_hist[maj_3rd_idx] + 16'd4096)) begin
+        if (bgm_reset) begin
+            native_is_minor <= 1'b0;
+        end else if (frame_tick) begin
+            // Hysteresis margin increased to 65536 for 20-bit stability
+            if (note_hist[min_3rd_idx] > (note_hist[maj_3rd_idx] + 20'd65536)) begin
                 native_is_minor <= 1'b1;
-            end else if (note_hist[maj_3rd_idx] > (note_hist[min_3rd_idx] + 16'd4096)) begin
+            end else if (note_hist[maj_3rd_idx] > (note_hist[min_3rd_idx] + 20'd65536)) begin
                 native_is_minor <= 1'b0;
             end
         end
@@ -2097,31 +2104,37 @@ module AutoKeyDetector (
 
     // --- Accumulate and Decay ---
     always_ff @(posedge clk) begin
-        if (frame_tick) begin
-            // Hysteresis margin
-            if (max_val > (note_hist[stable_root] + 16'd4096)) begin
+        if (bgm_reset) begin
+            for (int i = 0; i < 12; i++) begin
+                note_hist[i] <= 20'd0;
+            end
+        end else if (frame_tick) begin
+            // Hysteresis margin increased to 65536
+            if (max_val > (note_hist[stable_root] + 20'd65536)) begin
                 stable_root <= max_idx;
             end
 
             for (int i = 0; i < 12; i++) begin
-                logic [16:0] next_val;
-                next_val = note_hist[i] - (note_hist[i] >> 8);
+                logic [20:0] next_val;
+                // Decay slowed from >> 8 to >> 10. Takes 4x longer to forget a note.
+                next_val = note_hist[i] - (note_hist[i] >> 10);
 
+                // Adders scaled up to match the new 20-bit ceiling
                 if (active_1 && note_1 == i[3:0]) begin
-                    next_val = next_val + 17'd64;  // Square 1: Normal Weight
+                    next_val = next_val + 21'd256; 
                 end
                 if (active_2 && note_2 == i[3:0]) begin
-                    next_val = next_val + 17'd64;  // Square 2: Normal Weight
+                    next_val = next_val + 21'd256; 
                 end
                 if (active_3 && note_3 == i[3:0]) begin
-                    next_val = next_val + 17'd256; // Triangle (Bass): 4x Weight!
+                    next_val = next_val + 21'd1024; // Bass still gets 4x weight
                 end
                 
-                if (next_val > 17'hF000) begin
-                    next_val = 17'hF000;
+                if (next_val > 21'hF0000) begin
+                    next_val = 21'hF0000;
                 end
                 
-                note_hist[i] <= next_val[15:0];
+                note_hist[i] <= next_val[19:0];
             end
         end
     end
