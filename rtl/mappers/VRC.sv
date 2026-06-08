@@ -1250,6 +1250,8 @@ wire [11:0] snapped_freq2;
 
 // Scale Snapper Instantiations
 VRC_ScaleSnapper snapper_sq1 (
+	.clk(clk),            
+	.reset(~enable),     
 	.Period(freq0),
 	.scale_mode(scale_mode),
 	.root_key(root_key),
@@ -1257,6 +1259,8 @@ VRC_ScaleSnapper snapper_sq1 (
 );
 
 VRC_ScaleSnapper snapper_sq2 (
+	.clk(clk),            
+	.reset(~enable),     
 	.Period(freq1),
 	.scale_mode(scale_mode),
 	.root_key(root_key),
@@ -1264,6 +1268,8 @@ VRC_ScaleSnapper snapper_sq2 (
 );
 
 VRC_ScaleSnapper snapper_saw (
+	.clk(clk),            
+	.reset(~enable),     
 	.Period(freq2),
 	.scale_mode(scale_mode),
 	.root_key(root_key),
@@ -1780,18 +1786,38 @@ assign SaveStateBus_Dout = enable ? SaveStateBus_Dout_active : 64'h0000000000000
 endmodule
 
 // Helper Scale Snapping Core Module
-module VRC_ScaleSnapper (
+ module VRC_ScaleSnapper (
+	input  logic        clk,   
+	input  logic        reset, 
 	input  logic [11:0] Period,
 	input  logic [1:0]  scale_mode,
 	input  logic [3:0]  root_key,
 	output logic [11:0] snapped_period
 );
+	// --- Smart Vibrato & Pitch Bend Preserver ---
+	logic [11:0] anchor_period;
+	logic [11:0] period_diff;
+	logic [11:0] threshold;
+	logic signed [13:0] vibrato_delta;
+
+	assign period_diff = (Period > anchor_period) ? (Period - anchor_period) : (anchor_period - Period);
+	assign threshold = (anchor_period >> 4) + 12'd4;
+	assign vibrato_delta = $signed({2'b00, Period}) - $signed({2'b00, anchor_period});
+
+	always_ff @(posedge clk) begin
+		if (reset) begin
+			anchor_period <= 0;
+		end else if (period_diff > threshold) begin
+			anchor_period <= Period;
+		end
+	end
+
 	logic [11:0] norm_period;
 	logic [2:0]  shift_amt;
 	logic        shift_dir;
 
 	always_comb begin
-		norm_period = Period;
+		norm_period = anchor_period; // <-- USE ANCHOR
 		shift_amt   = 3'd0;
 		shift_dir   = 1'b0;
 		
@@ -1888,14 +1914,41 @@ module VRC_ScaleSnapper (
 		endcase
 	end
 
+	logic [11:0] octave_corrected_base;
+	always_comb begin
+		if (current_note >= 4'd9 && snapped_note <= 4'd2) begin
+			// Snapped UP across the octave boundary
+			octave_corrected_base = snapped_base_period >> 1;
+		end else if (current_note <= 4'd2 && snapped_note >= 4'd9) begin
+			// Snapped DOWN across the octave boundary
+			octave_corrected_base = snapped_base_period << 1;
+		end else begin
+			octave_corrected_base = snapped_base_period;
+		end
+	end
+
+	logic [11:0] snapped_anchor_period;
+	always_comb begin
+		if (scale_mode == 2'd0) begin
+			snapped_anchor_period = anchor_period;
+		end else begin
+			if (shift_dir == 1'b1)
+				snapped_anchor_period = octave_corrected_base << shift_amt;
+			else
+				snapped_anchor_period = octave_corrected_base >> shift_amt;
+		end
+	end
+
 	always_comb begin
 		if (scale_mode == 2'd0) begin
 			snapped_period = Period;
 		end else begin
-			if (shift_dir == 1'b1)
-				snapped_period = snapped_base_period << shift_amt;
+			if ($signed({2'b00, snapped_anchor_period}) + vibrato_delta < 0)
+				snapped_period = 0;
+			else if ($signed({2'b00, snapped_anchor_period}) + vibrato_delta > 14'h0FFF)
+				snapped_period = 12'hFFF;
 			else
-				snapped_period = snapped_base_period >> shift_amt;
+				snapped_period = snapped_anchor_period + vibrato_delta[11:0];
 		end
 	end
 endmodule

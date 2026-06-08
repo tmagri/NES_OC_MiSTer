@@ -252,6 +252,28 @@ module SquareChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_SQ1) (
 		endcase
 	end
 
+	// --- Smart Vibrato & Pitch Bend Preserver ---
+	logic [10:0] anchor_period;
+	logic [10:0] period_diff;
+	logic [10:0] threshold;
+	logic signed [12:0] vibrato_delta;
+
+	// Calculate absolute difference between the live period and our anchor
+	assign period_diff = (Period > anchor_period) ? (Period - anchor_period) : (anchor_period - Period);
+	
+	// Threshold for a "new note" is ~1 semitone (Period / 16) plus a tiny buffer for deep vibratos
+	assign threshold = (anchor_period >> 4) + 11'd4; 
+	assign vibrato_delta = $signed({2'b00, Period}) - $signed({2'b00, anchor_period});
+
+	always_ff @(posedge clk) begin
+		if (reset || cold_reset) begin
+			anchor_period <= 0;
+		end else if (period_diff > threshold) begin
+			// If pitch moves more than a semitone, it's a new note! Re-center the anchor.
+			anchor_period <= Period;
+		end
+	end
+
 	// --- Musical Auto-Tune System ---
 	logic [1:0] latched_scale_mode;
 	logic [3:0] latched_root_key;
@@ -261,7 +283,7 @@ module SquareChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_SQ1) (
 
 	// 1. Normalise the raw period into a "Base Octave" window (roughly between 213 and 427 ticks)
 	always_comb begin
-		norm_period = Period;
+		norm_period = anchor_period;
 		shift_amt   = 3'd0;
 		shift_dir   = 1'b0;
 		
@@ -380,15 +402,31 @@ module SquareChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_SQ1) (
 	end
 
 	// 7. De-normalise the snapped base period back to its original target octave range
+	logic [10:0] snapped_anchor_period;
+	always_comb begin
+		if (latched_scale_mode == 2'd0) begin
+			snapped_anchor_period = anchor_period; 
+		end else begin
+			if (shift_dir == 1'b1)
+				snapped_anchor_period = octave_corrected_base << shift_amt;
+			else
+				snapped_anchor_period = octave_corrected_base >> shift_amt;
+		end
+	end
+
+	// 8. Re-apply the live vibrato delta to the snapped anchor
 	logic [10:0] snapped_period;
 	always_comb begin
 		if (latched_scale_mode == 2'd0) begin
-			snapped_period = Period;
+			snapped_period = Period; // Fully transparent bypass when off
 		end else begin
-			if (shift_dir == 1'b1)
-				snapped_period = octave_corrected_base << shift_amt;
+			// Add the un-quantized vibrato wiggle onto the firmly snapped pitch
+			if ($signed({2'b00, snapped_anchor_period}) + vibrato_delta < 0)
+				snapped_period = 0;
+			else if ($signed({2'b00, snapped_anchor_period}) + vibrato_delta > 13'h07FF)
+				snapped_period = 11'h7FF;
 			else
-				snapped_period = octave_corrected_base >> shift_amt;
+				snapped_period = snapped_anchor_period + vibrato_delta[10:0];
 		end
 	end
 
@@ -701,6 +739,28 @@ module TriangleChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_TRI, paramet
 		if (applied_period > 1) sample_latch <= Sample;
 	end
 
+	// --- Smart Vibrato & Pitch Bend Preserver ---
+	logic [10:0] anchor_period;
+	logic [10:0] period_diff;
+	logic [10:0] threshold;
+	logic signed [12:0] vibrato_delta;
+
+	// Calculate absolute difference between the live period and our anchor
+	assign period_diff = (Period > anchor_period) ? (Period - anchor_period) : (anchor_period - Period);
+	
+	// Threshold for a "new note" is ~1 semitone (Period / 16) plus a tiny buffer for deep vibratos
+	assign threshold = (anchor_period >> 4) + 11'd4; 
+	assign vibrato_delta = $signed({2'b00, Period}) - $signed({2'b00, anchor_period});
+
+	always_ff @(posedge clk) begin
+		if (reset || cold_reset) begin
+			anchor_period <= 0;
+		end else if (period_diff > threshold) begin
+			// If pitch moves more than a semitone, it's a new note! Re-center the anchor.
+			anchor_period <= Period;
+		end
+	end
+
 	// --- Musical Auto-Tune System ---
 	logic [1:0] latched_scale_mode;
 	logic [3:0] latched_root_key;
@@ -709,7 +769,7 @@ module TriangleChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_TRI, paramet
 	logic        shift_dir; // 0 = Shift Left (High Pitch), 1 = Shift Right (Low Pitch)
 	
 	always_comb begin
-		norm_period = Period;
+		norm_period = anchor_period;
 		shift_amt   = 3'd0;
 		shift_dir   = 1'b0;
 		
@@ -828,15 +888,31 @@ module TriangleChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_TRI, paramet
 	end
 
 	// 7. De-normalise the snapped base period back to its original target octave range
+	logic [10:0] snapped_anchor_period;
+	always_comb begin
+		if (latched_scale_mode == 2'd0) begin
+			snapped_anchor_period = anchor_period; 
+		end else begin
+			if (shift_dir == 1'b1)
+				snapped_anchor_period = octave_corrected_base << shift_amt;
+			else
+				snapped_anchor_period = octave_corrected_base >> shift_amt;
+		end
+	end
+
+	// 8. Re-apply the live vibrato delta to the snapped anchor
 	logic [10:0] snapped_period;
 	always_comb begin
 		if (latched_scale_mode == 2'd0) begin
-			snapped_period = Period;
+			snapped_period = Period; // Fully transparent bypass when off
 		end else begin
-			if (shift_dir == 1'b1)
-				snapped_period = octave_corrected_base << shift_amt;
+			// Add the un-quantized vibrato wiggle onto the firmly snapped pitch
+			if ($signed({2'b00, snapped_anchor_period}) + vibrato_delta < 0)
+				snapped_period = 0;
+			else if ($signed({2'b00, snapped_anchor_period}) + vibrato_delta > 13'h07FF)
+				snapped_period = 11'h7FF;
 			else
-				snapped_period = octave_corrected_base >> shift_amt;
+				snapped_period = snapped_anchor_period + vibrato_delta[10:0];
 		end
 	end
 
