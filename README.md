@@ -39,6 +39,8 @@ True Stereo Sound implemented with high-quality separation (enable "Stereo Mix" 
 
 * **Famiclone Duty Swap:** Replicates a classic audio hardware hardware quirk found on many Famicom clone consoles ("Famiclones"). When active, it swaps the 25% and 50% pulse wave duty cycles on the square channels, accurately reproducing the altered music and sound effect timbres unique to clone hardware.
 
+* **Force Scale (Major / Minor):** A purely "blursed" audio fun mod that dynamically auto-tunes the entire game's soundtrack in real-time. Depending on your mood, you can force all tunes into a Major scale to make the game sound bizarrely happy, or into a Minor scale to put a damper on things and give everything a sadder tone!
+
 ### **Epileptic‑Friendly Filter (Temporal Frame Blending)**
 
 A new optional accessibility feature designed to reduce rapid flashing sequences that may trigger discomfort or photosensitive reactions.
