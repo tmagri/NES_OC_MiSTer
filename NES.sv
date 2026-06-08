@@ -985,9 +985,10 @@ wire [1:0] osd_scale_mode = status[81:80];
 // --- Smart Bypass Heuristic ---
 // If the user forces Major (1) but the track is natively Major (0), bypass (0).
 // If the user forces Minor (2) but the track is natively Minor (1), bypass (0).
-wire [1:0] active_scale_mode = (osd_scale_mode == 2'd1 && !native_is_minor) ? 2'd0 :
-                               (osd_scale_mode == 2'd2 && native_is_minor)  ? 2'd0 :
-                               osd_scale_mode;
+//wire [1:0] active_scale_mode = (osd_scale_mode == 2'd1 && !native_is_minor) ? 2'd0 :
+//                              (osd_scale_mode == 2'd2 && native_is_minor)  ? 2'd0 :
+//                              osd_scale_mode;
+wire [1:0] active_scale_mode = osd_scale_mode;
 
 NES nes (
 	.clk             (clk),

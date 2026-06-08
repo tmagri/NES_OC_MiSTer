@@ -2071,6 +2071,24 @@ module AutoKeyDetector (
 
     assign auto_root = stable_root;
 
+	// --- Silence Detection ---
+    // Flushes history if all melodic channels are silent for ~1 second
+    logic [7:0] silence_timer = 0;
+    logic silence_reset;
+
+    always_ff @(posedge clk) begin
+        if (frame_tick) begin
+            if (!active_1 && !active_2 && !active_3) begin
+                if (silence_timer < 8'd60) 
+                    silence_timer <= silence_timer + 1'b1;
+            end else begin
+                silence_timer <= 0;
+            end
+        end
+    end
+
+    assign silence_reset = (silence_timer == 8'd60);
+
     // --- Native Scale Detection ---
     logic [3:0] min_3rd_idx;
     logic [3:0] maj_3rd_idx;
@@ -2078,7 +2096,7 @@ module AutoKeyDetector (
     assign maj_3rd_idx = (stable_root >= 4'd8) ? (stable_root - 4'd8) : (stable_root + 4'd4);
 
     always_ff @(posedge clk) begin
-        if (bgm_reset) begin
+        if (bgm_reset || silence_reset) begin
             native_is_minor <= 1'b0;
         end else if (frame_tick) begin
             // Hysteresis margin increased to 65536 for 20-bit stability
@@ -2104,7 +2122,7 @@ module AutoKeyDetector (
 
     // --- Accumulate and Decay ---
     always_ff @(posedge clk) begin
-        if (bgm_reset) begin
+        if (bgm_reset || silence_reset) begin
             for (int i = 0; i < 12; i++) begin
                 note_hist[i] <= 20'd0;
             end
