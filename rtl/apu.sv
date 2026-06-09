@@ -2135,11 +2135,11 @@ module AutoKeyDetector (
     input  logic        active_2,
     input  logic [3:0]  note_3,      
     input  logic        active_3,
-    input  logic        bgm_reset,    // <-- Hardware track reset flag
+    input  logic        bgm_reset,    
     output logic [3:0]  auto_root,    
     output logic        native_is_minor = 1'b0
 );
-    // Upgraded to 20-bit memory for long-term phrase retention
+    // 20-bit memory for long-term phrase retention
     logic [19:0] note_hist [0:11];
     logic [3:0] max_idx;
     logic [19:0] max_val;
@@ -2147,8 +2147,7 @@ module AutoKeyDetector (
 
     assign auto_root = stable_root;
 
-	// --- Silence Detection ---
-    // Flushes history if all melodic channels are silent for ~1 second
+    // --- Silence Detection ---
     logic [7:0] silence_timer = 0;
     logic silence_reset;
 
@@ -2162,7 +2161,6 @@ module AutoKeyDetector (
             end
         end
     end
-
     assign silence_reset = (silence_timer == 8'd60);
 
     // --- Native Scale Detection ---
@@ -2175,7 +2173,6 @@ module AutoKeyDetector (
         if (bgm_reset || silence_reset) begin
             native_is_minor <= 1'b0;
         end else if (frame_tick) begin
-            // Hysteresis margin increased to 65536 for 20-bit stability
             if (note_hist[min_3rd_idx] > (note_hist[maj_3rd_idx] + 20'd65536)) begin
                 native_is_minor <= 1'b1;
             end else if (note_hist[maj_3rd_idx] > (note_hist[min_3rd_idx] + 20'd65536)) begin
@@ -2196,6 +2193,42 @@ module AutoKeyDetector (
         end
     end
 
+    // --- Note Stability Filter (SFX Rejector) ---
+    // Requires a note to hold steady for 4 frames (~66ms) on Squares to bypass SFX sweeps.
+    // Triangle (Bass) is given a lenient 2-frame threshold for staccato basslines.
+    logic [3:0] track_note_1, track_note_2, track_note_3;
+    logic [2:0] stable_cnt_1, stable_cnt_2, stable_cnt_3;
+    logic valid_1, valid_2, valid_3;
+
+    always_ff @(posedge clk) begin
+        if (frame_tick) begin
+            // Channel 1 (Square 1)
+            if (active_1 && note_1 == track_note_1) begin
+                if (stable_cnt_1 < 3'd7) stable_cnt_1 <= stable_cnt_1 + 1'b1;
+            end else begin
+                track_note_1 <= note_1; stable_cnt_1 <= 0;
+            end
+
+            // Channel 2 (Square 2)
+            if (active_2 && note_2 == track_note_2) begin
+                if (stable_cnt_2 < 3'd7) stable_cnt_2 <= stable_cnt_2 + 1'b1;
+            end else begin
+                track_note_2 <= note_2; stable_cnt_2 <= 0;
+            end
+
+            // Channel 3 (Triangle)
+            if (active_3 && note_3 == track_note_3) begin
+                if (stable_cnt_3 < 3'd7) stable_cnt_3 <= stable_cnt_3 + 1'b1;
+            end else begin
+                track_note_3 <= note_3; stable_cnt_3 <= 0;
+            end
+        end
+    end
+
+    assign valid_1 = active_1 && (stable_cnt_1 >= 3'd4);
+    assign valid_2 = active_2 && (stable_cnt_2 >= 3'd4);
+    assign valid_3 = active_3 && (stable_cnt_3 >= 3'd2); 
+
     // --- Accumulate and Decay ---
     always_ff @(posedge clk) begin
         if (bgm_reset || silence_reset) begin
@@ -2203,24 +2236,22 @@ module AutoKeyDetector (
                 note_hist[i] <= 20'd0;
             end
         end else if (frame_tick) begin
-            // Hysteresis margin increased to 65536
             if (max_val > (note_hist[stable_root] + 20'd65536)) begin
                 stable_root <= max_idx;
             end
 
             for (int i = 0; i < 12; i++) begin
                 logic [20:0] next_val;
-                // Decay slowed from >> 8 to >> 10. Takes 4x longer to forget a note.
                 next_val = note_hist[i] - (note_hist[i] >> 10);
 
-                // Adders scaled up to match the new 20-bit ceiling
-                if (active_1 && note_1 == i[3:0]) begin
+                // Use the filtered "valid_X" flags and tracked notes instead of raw input
+                if (valid_1 && track_note_1 == i[3:0]) begin
                     next_val = next_val + 21'd256; 
                 end
-                if (active_2 && note_2 == i[3:0]) begin
+                if (valid_2 && track_note_2 == i[3:0]) begin
                     next_val = next_val + 21'd256; 
                 end
-                if (active_3 && note_3 == i[3:0]) begin
+                if (valid_3 && track_note_3 == i[3:0]) begin
                     next_val = next_val + 21'd1024; // Bass still gets 4x weight
                 end
                 
