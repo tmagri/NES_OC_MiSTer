@@ -1086,6 +1086,8 @@ module vrc7_mixed (
 	input         clk,
 	input         ce,
 	input         mapper_ce,
+	input         audio_ce, // Async OC: native 1.78MHz, never stalls
+	input         async_oc, // Async OC: switch audio onto audio_ce
 	input        smooth_audio,
 	input  [1:0] scale_mode,
 	input  [3:0] root_key,
@@ -1108,21 +1110,48 @@ always@(posedge clk) begin
 	end
 end
 
+// Async OC: regenerate the YM2413 clock-enable pattern from the native-rate
+// audio_ce (two ticks per 12 master clocks = 3.58MHz) instead of the
+// overclocked cart ce; legacy keeps master's exact expression.
+wire ce_ref = async_oc ? audio_ce : ce;
 reg [3:0] ce_count;
 always@(posedge clk) begin
 	if (~enable)
 		ce_count <= 0;
-	else if (ce)
+	else if (ce_ref)
 		ce_count <= 0;
 	else
 		ce_count <= ce_count + 4'd1;
 end
 
 wire ack;
-wire ce_ym2143 = ce | (ce_count==4'd5);
+wire ce_ym2143 = async_oc ? (audio_ce | (ce_count==4'd5)) : (ce | (ce_count==4'd5));
 wire signed [13:0] ym2143audio;
 wire wr_audio = wren && (addr_in[15:6]==10'b1001_0000_00) && (addr_in[4:0]==5'b1_0000); //0x9010 or 0x9030
-eseopll ym2143vrc7 (clk,~enable, ce_ym2143,wr_audio,ce_ym2143,ack,wr_audio,{15'b0,addr_in[5]},data_in,ym2143audio);
+
+// Async OC: the fast free-running CPU makes write windows too short to rely on
+// hitting a ce_ym2143 tick, so latch the write and hold the request until the
+// OPLL acknowledges it. Legacy keeps the direct connection.
+reg        opll_wr_pend;
+reg [5:0]  opll_addr_lat;
+reg [7:0]  opll_data_lat;
+always@(posedge clk) begin
+	if (~enable)
+		opll_wr_pend <= 1'b0;
+	else begin
+		if (wr_audio) begin
+			opll_wr_pend  <= 1'b1;
+			opll_addr_lat <= {5'd0, addr_in[5]};
+			opll_data_lat <= data_in;
+		end else if (ack)
+			opll_wr_pend <= 1'b0;
+	end
+end
+wire opll_req = async_oc ? opll_wr_pend        : ce_ym2143;
+wire opll_wrt = async_oc ? opll_wr_pend        : wr_audio;
+wire [15:0] opll_adr = async_oc ? {10'b0, opll_addr_lat} : {15'b0, addr_in[5]};
+wire [7:0]  opll_dbo = async_oc ? opll_data_lat          : data_in;
+eseopll ym2143vrc7 (clk,~enable, ce_ym2143,opll_wrt,opll_req,ack,opll_wrt,opll_adr,opll_dbo,ym2143audio);
 
 // The strategy here:
 // VRC7 sound is very low, and the top bit is seldom (if ever) used. It's output as signed with
@@ -1144,6 +1173,8 @@ module vrc6_mixed (
 	input         clk,
 	input         ce,    // Negedge M2 (aka CPU ce)
 	input         mapper_ce,
+	input         audio_ce, // Async OC: native 1.78MHz, never stalls
+	input         async_oc, // Async OC: switch audio onto audio_ce
 	input         put_ce,
 	input   [1:0] overclock,
 	input        smooth_audio,
@@ -1168,6 +1199,8 @@ module vrc6_mixed (
 vrc6sound snd_vrc6 (
 	.clk(clk),
 	.ce(ce),
+	.audio_ce(audio_ce),
+	.async_oc(async_oc),
 	.put_ce(put_ce),
 	.overclock(overclock),
 	.enable(enable),
@@ -1222,6 +1255,8 @@ endmodule
 module vrc6sound(
 	input clk,
 	input ce,
+	input audio_ce, // Async OC: native 1.78MHz, never stalls
+	input async_oc, // Async OC: switch audio onto audio_ce
 	input put_ce,
 	input [1:0] overclock,
 	input enable,
@@ -1385,8 +1420,9 @@ always@(posedge clk) begin
 		// Re-sync smoothing variables natively on state load (acc * 17)
 		smooth_acc <= {SS_MAP2[58:51], 4'd0} + {4'd0, SS_MAP2[58:51]};
 		err_acc    <= 0;
-	end else if(ce) begin
-		if(wr) begin
+	end else begin
+		// Register writes stay gated by the (possibly overclocked) CPU ce
+		if(ce && wr) begin
 			case(ain)
 				16'h9000: {mode0, duty0, vol0}<=din;
 				16'h9001: freq0[7:0]<=din;
@@ -1401,7 +1437,9 @@ always@(posedge clk) begin
 				16'hB002: {en2, freq2[11:8]}<={din[7],din[3:0]};
 			endcase
 		end
-		if(pitch_ce) begin  // Gate frequency dividers at 1x rate
+		// Async OC: run the freq dividers at native-rate audio_ce directly;
+		// legacy keeps master's ce & pitch_ce (pitch corrector skips overclocked ces)
+		if(async_oc ? audio_ce : (ce & pitch_ce)) begin
 			if(en0) begin
 				if(div0!=0)
 					div0<=div0-1'd1;
@@ -1446,7 +1484,7 @@ always@(posedge clk) begin
 					end
 				end
 			end
-		end  // pitch_ce
+		end  // audio tick
 	end
 end
 

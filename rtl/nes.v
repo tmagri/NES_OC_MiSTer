@@ -112,6 +112,7 @@ module NES(
 	output        cpumem_write,
 	output  [7:0] cpumem_dout,
 	input   [7:0] cpumem_din,
+	input         cpumem_busy,     // SDRAM ch1 busy: stall source for async CPU overclock
 	output [21:0] ppumem_addr,
 	output        ppumem_read,
 	output        ppumem_write,
@@ -141,7 +142,6 @@ module NES(
 	input  [3:0]  root_key,
 	output [3:0]  detected_key,
 	output        native_is_minor,
-	output        apu_ce,
 	output        ppu_ce_out,
 	input         gg,
 	input [128:0] gg_code,
@@ -188,7 +188,8 @@ module NES(
 	output  [7:0] SAVE_out_be,
 	input         SAVE_out_done,   // should be one cycle high when write is done or read value is valid
 	input   [1:0] overclock,       // 0=off, 1=mild 60fps, 2=full 60fps
-	input         oc_method
+	input         oc_method,
+	input         async_oc         // 1 = asynchronous CPU overclock (PPU 1x, CPU free-run + waitstates)
 );
 
 
@@ -225,7 +226,9 @@ module NES(
 // - PPU read/write should happen on the last PPU tick in a CPU cycle (usually third)
 
 assign nes_div = div_sys;
-assign apu_ce = cpu_ce;
+// Async OC: the APU is clocked at the native 1.78MHz rate so audio never stretches.
+// Legacy: the APU follows the (overclocked) CPU and is pitch-corrected internally.
+wire apu_ce = async_oc ? native_ce : cpu_ce;
 
 wire [7:0] from_data_bus;
 wire [7:0] cpu_dout;
@@ -233,6 +236,8 @@ wire [7:0] cpu_dout;
 // odd or even apu cycle, AKA div_apu or apu_/clk2. This is actually not 50% duty cycle. It is high for 18
 // master cycles and low for 6 master cycles. It is considered active when low or "even".
 reg odd_or_even = 1; // 1 == odd, 0 == even
+// Async OC: a native-rate odd/even (get/put) phase used to clock the APU audio.
+reg native_odd_or_even = 1;
 
 // -----------------------------------------------------------------------
 // Clock Dividers — hardware-mod-style proportional overclock
@@ -266,8 +271,12 @@ wire [2:0] div_ppu_n = (is_medium_oc && ppu_tick == 2) ? 3'd2 : div_ppu_n_base;
 // Counters
 reg [4:0] div_cpu = 5'd1;
 reg [4:0] div_native_cpu = 5'd1;
+reg [4:0] div_mapper = 5'd1; // Async OC: native-rate counter that stalls together with the CPU
 wire native_ce = (div_native_cpu == 5'd12);
-wire mapper_ce = (div_native_cpu == 5'd10);
+// Async OC: mapper_ce must freeze while the CPU stalls so cycle-based IRQ counters stay tied to
+// CPU time. Legacy keeps the original unoverclocked expression exactly.
+wire mapper_ce = async_oc ? (div_mapper == 5'd12) : (div_native_cpu == 5'd10);
+wire audio_ce  = native_ce;  // Async OC: always native 1.78MHz, never stalls (drives expansion audio)
 reg [2:0] div_ppu = 3'd1;
 reg [1:0] div_sys = 2'd0;
 
@@ -275,10 +284,14 @@ reg [1:0] div_sys = 2'd0;
 wire cpu_ce  = (div_cpu == div_cpu_n);
 wire ppu_ce  = (div_ppu == div_ppu_n);
 assign ppu_ce_out = ppu_ce;
-wire cart_ce = (div_cpu == (overclock_latched[1] ? div_cpu_n - 5'd1 : div_cpu_n - 5'd2)); // Late trigger for Medium/Extreme (Mode 2/3)
+// Async OC treats any non-zero OC level as "late trigger"; legacy only Medium/Extreme (bit1).
+wire cart_ce_sel = async_oc ? (overclock_latched != 2'd0) : overclock_latched[1];
+wire cart_ce = (div_cpu == (cart_ce_sel ? div_cpu_n - 5'd1 : div_cpu_n - 5'd2)); // Late trigger for Medium/Extreme (Mode 2/3)
 
-// Signals — all offsets relative to div_cpu_n so they scale with OC level
-wire cart_pre = (div_cpu >= div_cpu_n - 5'd6) && (div_cpu <= (overclock_latched[1] ? div_cpu_n - 5'd1 : div_cpu_n - 5'd2));
+// Signals — all offsets relative to div_cpu_n so they scale with OC level.
+// Async OC guards the start offset against underflow at the small async dividers (div_cpu_n<6).
+wire [4:0] cart_pre_start = (async_oc && div_cpu_n <= 5'd6) ? 5'd1 : (div_cpu_n - 5'd6);
+wire cart_pre = (div_cpu >= cart_pre_start) && (div_cpu <= (cart_ce_sel ? div_cpu_n - 5'd1 : div_cpu_n - 5'd2));
 
 wire ppu_read  = (ppu_tick == 1);
 wire ppu_write = (ppu_tick == 1);
@@ -295,7 +308,8 @@ wire phi2 = (div_cpu > (div_cpu_n / 3)) && (div_cpu < div_cpu_n);
 // frame so that at the faster pixel clock, the frame still takes 1/60th 
 // of a second to render.
 // -----------------------------------------------------------------------
-wire [9:0] oc_extra_lines = 
+// Async OC locks the PPU at 1x, so no VBlank extension is ever needed.
+wire [9:0] oc_extra_lines = async_oc ? 10'd0 :
 	(overclock_latched == 2'd1) ? ((sys_type == 2'b00) ? 10'd87  : 10'd104) : // Turbo   (1.33x PPU clock extension)
 	(overclock_latched == 2'd2) ? ((sys_type == 2'b00) ? 10'd131 : 10'd156) : // Medium  (1.50x PPU clock extension)
 	(overclock_latched == 2'd3) ? ((sys_type == 2'b00) ? 10'd262 : 10'd312) : // Extreme (2.00x PPU clock extension)
@@ -352,11 +366,39 @@ reg        reset_nes_last;
 assign corepaused = corepause_active;
 assign refresh    = corepause_active_delay && ppu_ce_pause;
 
+// -----------------------------------------------------------------------
+// Async CPU Overclock — wait-state / stall logic
+// Only active when async_oc is selected. In legacy mode every stall term is
+// forced to 0, so the dividers below advance exactly as master.
+// -----------------------------------------------------------------------
+// SDRAM cache-miss stall: freeze the whole system while a CPU memory request
+// is being serviced, so the PPU never reads stale data mid-transaction.
+wire cpumem_req = cpumem_read || cpumem_write;
+reg  cpumem_active;
+always @(posedge clk) begin
+	if (cpu_ce)                              cpumem_active <= 1'b0;
+	else if (cpumem_req && cpumem_busy)      cpumem_active <= 1'b1;
+end
+wire cpumem_pending = cpumem_req && (!cpumem_active || cpumem_busy);
+wire cpumem_stall   = async_oc && cart_ce && cpumem_pending;
+
+// PPU-access handshake: the CPU stalls at the end of its cycle until the PPU
+// accepts a $2000-$3FFF transaction (replaces the rigid ppu_tick==1 alignment).
+reg  ppu_acc_done;
+wire ppu_cs_sync = ppu_cs && !ppu_acc_done;
+always @(posedge clk) begin
+	if (reset_nes)                    ppu_acc_done <= 1'b0;
+	else if (cpu_ce)                  ppu_acc_done <= 1'b0; // reset for the next CPU cycle
+	else if (ppu_ce && ppu_cs_sync)   ppu_acc_done <= 1'b1; // PPU accepted the transaction
+end
+wire cpu_ppu_stall = async_oc && (div_cpu == (div_cpu_n - 5'd1)) && ppu_cs_sync && !ppu_ce;
+
 always @(posedge clk) begin
 	if (reset_nes) begin
 		hold_reset     <= 1;
 		div_cpu        <= 5'd1;
 		div_native_cpu <= 5'd1;
+		div_mapper     <= 5'd1;
 		div_ppu        <= 3'd1;
 		div_sys        <= 0;
 		ppu_tick       <= 0;
@@ -364,28 +406,52 @@ always @(posedge clk) begin
 		freeze_clocks  <= 0;
 		faux_pixel_cnt <= 0;
 		overclock_latched <= overclock;
-		is_medium_oc <= (overclock == 2'd2);
-		case (overclock)
-			2'd1:    begin div_cpu_n <= 5'd9;  div_ppu_n_base <= 3'd3; end  // Turbo   1.33x (÷9/÷3)
-			2'd2:    begin div_cpu_n <= 5'd8;  div_ppu_n_base <= 3'd3; end  // Medium  1.50x (dynamic 3-3-2)
-			2'd3:    begin div_cpu_n <= 5'd6;  div_ppu_n_base <= 3'd2; end  // Extreme 2.00x (÷6/÷2)
-			default: begin div_cpu_n <= 5'd12; div_ppu_n_base <= 3'd4; end  // Off     1.00x (÷12/÷4)
-		endcase
+		if (async_oc) begin
+			// Async: PPU locked at 1x (÷4), CPU free-runs at ÷12/÷6/÷4/÷3.
+			is_medium_oc <= 1'b0;
+			case (overclock)
+				2'd1:    begin div_cpu_n <= 5'd6;  div_ppu_n_base <= 3'd4; end  // 2x
+				2'd2:    begin div_cpu_n <= 5'd4;  div_ppu_n_base <= 3'd4; end  // 3x
+				2'd3:    begin div_cpu_n <= 5'd3;  div_ppu_n_base <= 3'd4; end  // ~4x (with wait states)
+				default: begin div_cpu_n <= 5'd12; div_ppu_n_base <= 3'd4; end  // Off 1x
+			endcase
+		end else begin
+			is_medium_oc <= (overclock == 2'd2);
+			case (overclock)
+				2'd1:    begin div_cpu_n <= 5'd9;  div_ppu_n_base <= 3'd3; end  // Turbo   1.33x (÷9/÷3)
+				2'd2:    begin div_cpu_n <= 5'd8;  div_ppu_n_base <= 3'd3; end  // Medium  1.50x (dynamic 3-3-2)
+				2'd3:    begin div_cpu_n <= 5'd6;  div_ppu_n_base <= 3'd2; end  // Extreme 2.00x (÷6/÷2)
+				default: begin div_cpu_n <= 5'd12; div_ppu_n_base <= 3'd4; end  // Off     1.00x (÷12/÷4)
+			endcase
+		end
 	end
 	if (cpu_ce && !reset_nes) hold_reset <= 0;
 	if (~freeze_clocks | ~(div_ppu == (div_ppu_n - 1'b1))) begin
-		if (~skip_ppu_cycle) begin
-			div_cpu <= cpu_ce || (ppu_ce && div_cpu > div_cpu_n) ? 5'd1 : div_cpu + 5'd1;
+		// Async OC: the native counter always advances so audio never stalls. In legacy it
+		// follows master's gating (paused on the PAL skip cycle).
+		if (~skip_ppu_cycle || async_oc) begin
 			div_native_cpu <= native_ce || (ppu_ce && div_native_cpu > 5'd12) ? 5'd1 : div_native_cpu + 5'd1;
 		end
 
-		div_ppu <= ppu_ce ? 3'd1 : div_ppu + 3'd1;
+		// Async OC: an SDRAM cache miss freezes the whole system (CPU+mapper+PPU).
+		if (~cpumem_stall) begin
+			// Async OC: a pending PPU access freezes only the CPU+mapper; the PPU keeps
+			// running so it can accept the transaction and release the stall.
+			if (~cpu_ppu_stall) begin
+				if (~skip_ppu_cycle) begin
+					div_cpu    <= cpu_ce || (ppu_ce && div_cpu > div_cpu_n) ? 5'd1 : div_cpu + 5'd1;
+					div_mapper <= mapper_ce || (ppu_ce && div_mapper > 5'd12) ? 5'd1 : div_mapper + 5'd1;
+				end
+			end
 
-		// reset the ticker on the first ppu tick at or after a cpu tick.
-		if (cpu_ce)
-			ppu_tick <= 0;
-		else if (ppu_ce)
-			ppu_tick <= ppu_tick + 1'b1;
+			div_ppu <= ppu_ce ? 3'd1 : div_ppu + 3'd1;
+
+			// reset the ticker on the first ppu tick at or after a cpu tick.
+			if (cpu_ce)
+				ppu_tick <= 0;
+			else if (ppu_ce)
+				ppu_tick <= ppu_tick + 1'b1;
+		end
 	end
 
 	// Add one extra PPU tick every 5 cpu cycles for PAL.
@@ -411,6 +477,7 @@ always @(posedge clk) begin
 	if (reset_nes | hold_reset) begin
 		bootvector_flag <= 1;
 		odd_or_even <= 1;
+		native_odd_or_even <= 1;
 	end else if (loading_savestate) begin
 		odd_or_even    <= SS_TOP[0];
 		div_cpu        <= SS_TOP[21:17];
@@ -424,9 +491,17 @@ always @(posedge clk) begin
 		div_cpu_n         <= SS_TOP[43:39];
 		div_ppu_n_base    <= SS_TOP[46:44];
 		is_medium_oc      <= SS_TOP[47];
-	end else if (cpu_ce) begin
-		odd_or_even <= ~odd_or_even;
-		bootvector_flag <= 0;
+		// Async OC state
+		div_mapper         <= SS_TOP[52:48];
+		native_odd_or_even <= SS_TOP[53];
+	end else begin
+		if (cpu_ce) begin
+			odd_or_even <= ~odd_or_even;
+			bootvector_flag <= 0;
+		end
+		if (native_ce) begin
+			native_odd_or_even <= ~native_odd_or_even;
+		end
 	end
 
 	// Realign if the system type changes or reset just finished.
@@ -435,6 +510,7 @@ always @(posedge clk) begin
 	if ((last_sys_type != sys_type) || (reset_nes_last && !reset_nes)) begin
 		div_cpu <= 5'd1;
 		div_native_cpu <= 5'd1;
+		div_mapper <= 5'd1;
 		div_ppu <= 3'd1;
 		div_sys <= 0;
 		ppu_tick <= 0;
@@ -451,6 +527,7 @@ always @(posedge clk) begin
 		if (corepause_active || (pausecore && div_cpu == 5'd1 && div_ppu == 3'd1 && div_sys == 0 && cpu_tick_count == 0 && ~freeze_clocks && is_in_vblank_paused && ~pause_cpu && cpu_Instrnew)) begin
 			div_cpu           <= 5'd1;
 			div_native_cpu    <= 5'd1;
+			div_mapper        <= 5'd1;
 			div_ppu           <= 3'd1;
 			div_sys           <= 0;
 			cpu_tick_count    <= 0;
@@ -570,6 +647,12 @@ wire [7:0]  dbus = dma_aout_enable ? dma_data_to_ram : cpu_dout;
 wire mr_int      = dma_aout_enable ? dma_read  : cpu_rnw;
 wire mw_int      = dma_aout_enable ? !dma_read : !cpu_rnw;
 wire get_ce, put_ce;
+wire apu_get_ce, apu_put_ce; // APU-phase outputs (native-rate in async, CPU-rate in legacy)
+// DMA and joypads always run at full CPU rate: in legacy the APU outputs equal
+// these expressions bit-for-bit (apu_ce == cpu_ce), in async the APU is on the
+// native clock so DMA must not follow it.
+assign get_ce = async_oc ? (cpu_ce & odd_or_even)  : apu_get_ce;
+assign put_ce = async_oc ? (cpu_ce & ~odd_or_even) : apu_put_ce;
 
 DmaController dma(
 	.clk            (clk),
@@ -611,7 +694,9 @@ APU apu(
 	.CS             (apu_cs),
 	.PAL            (sys_type == 2'b01),
 	.ce             (apu_ce),
-	.overclock      (overclock_latched), // use latched value so savestate restores correct pitch
+	// Async OC: overclock=0 forces pitch_ce=1 so all audio clocks tick natively;
+	// legacy keeps the latched value so savestate restores correct pitch.
+	.overclock      (async_oc ? 2'd0 : overclock_latched),
 	.reset          (reset),
 	.cold_reset     (cold_reset),
 	.ADDR           (addr[4:0]),
@@ -629,10 +714,10 @@ APU apu(
 	.DmaAck         (apu_dma_ack),
 	.DmaAddr        (apu_dma_addr),
 	.DmaData        (dma_data_bus),
-	.get_or_put     (odd_or_even),
+	.get_or_put     (async_oc ? native_odd_or_even : odd_or_even),
 	.IRQ            (apu_irq),
-	.put_ce         (put_ce),
-	.get_ce         (get_ce),
+	.put_ce         (apu_put_ce),
+	.get_ce         (apu_get_ce),
 	.smooth_audio   (smooth_audio),
 	.smooth_noise   (smooth_noise),
 	.swap_duty		(swap_duty),
@@ -699,7 +784,9 @@ assign scanline = (corepause_active) ? scanline_paused : scanline_ppu;
 
 PPU ppu(
 	.clk              (clk),
-	.cs               (addr[15:13] == 3'b001 && phi2),
+	// Async OC: the ppu_acc_done handshake (ppu_cs_sync) replaces the rigid
+	// phi2/ppu_tick==1 alignment; legacy keeps master's exact strobes.
+	.cs               (async_oc ? ppu_cs_sync : (addr[15:13] == 3'b001 && phi2)),
 	.RWn              (mr_int && !mw_int),
 	.rst_behavior     (ppu_rst_behavior),
 	.ce               (ppu_ce),
@@ -712,8 +799,8 @@ PPU ppu(
 	.din              (dbus),
 	.dout             (ppu_dout),
 	.ain              (addr[2:0]),
-	.read             (ppu_cs && mr_ppu),
-	.write            (ppu_cs && mw_ppu),
+	.read             (async_oc ? (ppu_cs_sync && mr_int) : (ppu_cs && mr_ppu)),
+	.write            (async_oc ? (ppu_cs_sync && mw_int) : (ppu_cs && mw_ppu)),
 	.nmi              (nmi),
 	.vram_r           (chr_read),
 	.vram_r_ex        (chr_read_ex),
@@ -736,6 +823,7 @@ PPU ppu(
 	.hsync            (hsync),
 	.vsync            (vsync),
 	.oc_method        (oc_method),
+	.async_oc         (async_oc),
 	// savestates
 	.SaveStateBus_Din       (SaveStateBus_Din        ),
 	.SaveStateBus_Adr       (SaveStateBus_Adr        ),
@@ -800,9 +888,11 @@ cart_top multi_mapper (
 	.audio_in          (audio_mappers),           // Amplified and inverted APU audio
 	.audio             (sample_ext),              // Mixed audio output from cart
 	.mapper_irq_pause  (mapper_irq_pause),        // Pause cycle-based mappers during OC extended Vblank
-	.mapper_ce         (mapper_ce),               // Always runs at unoverclocked 1.78MHz
-	.put_ce            (put_ce),   				  // Pass phase-aligned CE for expansion audio
-	.overclock         (overclock_latched),       // use latched value so savestate restores correct pitch
+	.mapper_ce         (mapper_ce),               // Always runs at unoverclocked 1.78MHz (stalls with CPU in async)
+	.audio_ce          (audio_ce),                // Async OC: never-stalling 1.78MHz for expansion audio
+	.async_oc          (async_oc),                // Async OC: switches expansion audio onto audio_ce
+	.put_ce            (apu_put_ce),              // Pass phase-aligned CE for expansion audio
+	.overclock         (async_oc ? 2'd0 : overclock_latched), // use latched value so savestate restores correct pitch
 	.smooth_audio      (smooth_audio),            // Option toggle
 	.scale_mode        (scale_mode),              // Force scale
 	.root_key          (root_key),                // Synced dynamic root key
@@ -930,7 +1020,9 @@ assign SS_TOP_BACK[38:37] = overclock_latched;
 assign SS_TOP_BACK[43:39] = div_cpu_n;
 assign SS_TOP_BACK[46:44] = div_ppu_n_base;
 assign SS_TOP_BACK[   47] = is_medium_oc;
-assign SS_TOP_BACK[63:48] = 16'b0; // free to be used
+assign SS_TOP_BACK[52:48] = div_mapper;          // Async OC: CPU-stalling mapper divider
+assign SS_TOP_BACK[   53] = native_odd_or_even;  // Async OC: native-rate APU phase
+assign SS_TOP_BACK[63:54] = 10'b0; // free to be used
 
 /**********************************************************/
 /*************       Savestates             ***************/

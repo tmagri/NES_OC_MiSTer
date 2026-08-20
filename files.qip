@@ -13,7 +13,6 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/cart.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ppu.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/apu.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_stretch.sv
 set_global_assignment -name VHDL_FILE rtl/bus_savestates.vhd
 set_global_assignment -name VHDL_FILE rtl/statemanager.vhd
 set_global_assignment -name VHDL_FILE rtl/savestates.vhd

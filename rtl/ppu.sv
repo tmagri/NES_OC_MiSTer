@@ -1280,6 +1280,7 @@ module PPU(
 	input  [1:0]  mask,
 	input [9:0]   extra_lines,
 	input         oc_method,
+	input         async_oc,      // Async OC: PPU locked at 1x while CPU free-runs with wait-states
 	output        render_ena_out,
 	output        evenframe,
 	// savestates
@@ -1827,7 +1828,9 @@ wire clear_nmi = (clear_signal | (read && ain == 2));
 wire set_nmi = entering_vblank & ~clear_nmi;
 
 // --- Protect $2002 polling during Overclocking ---
-wire oc_active = (|extra_lines);
+// Async OC has extra_lines == 0 (native frame) but still runs the CPU faster
+// than the PPU, so the vblank-race protection must stay enabled for it.
+wire oc_active = (|extra_lines) || async_oc;
 reg oc_vblank_race;
 
 always @(posedge clk) begin

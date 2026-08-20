@@ -563,6 +563,8 @@ endmodule
 module fds_mixed (
 	input         clk,
 	input         ce,    // Negedge M2 (aka CPU ce)
+	input         audio_ce, // Async OC: native 1.78MHz, never stalls
+	input         async_oc, // Async OC: switch audio onto audio_ce
 	input         enable,
 	input         wren,
 	input  [15:0] addr_in,
@@ -584,6 +586,8 @@ fds_audio fds_audio
 (
 	.clk(clk),
 	.m2(ce),
+	.audio_ce(audio_ce),
+	.async_oc(async_oc),
 	.reset(!enable),
 	.wr(wren),
 	.addr_in(addr_in),
@@ -648,6 +652,8 @@ endmodule
 module fds_audio(
 	input            clk,
 	input            m2,
+	input            audio_ce, // Async OC: native 1.78MHz, never stalls
+	input            async_oc, // Async OC: switch audio onto audio_ce
 	input            reset,
 	input            wr,
 	input     [15:0] addr_in,
@@ -801,7 +807,10 @@ end else if (Savestate_MAPRAMWrEn) begin
 		8'b01??????: wave_table[Savestate_MAPRAMAddr[5:0]] <= ss_di[5:0];
 		default: ;
 	endcase
-end else if (~old_m2 & m2) begin
+end else begin
+	// Async OC: the sound engine ticks from the never-stalling native audio_ce;
+	// legacy keeps master's exact m2-rising-edge clock.
+	if (async_oc ? audio_ce : (~old_m2 & m2)) begin
 	//**** Timings ****//
 	cycles <= wave_disable ? 4'h0 : cycles + 1'b1;
 
@@ -862,7 +871,10 @@ end else if (~old_m2 & m2) begin
 
 	if (~wave_wren)
 		wave_latch <= wave_table[wave_accum[23:18]];
+	end // timing clock
 
+	// Register writes stay on the CPU-side m2 rising edge in both modes.
+	if (~old_m2 & m2) begin
 	//**** Registers ****//
 	if (wr) begin
 		if (addr_in >= 'h4040 && addr_in < 'h4080) begin
@@ -938,7 +950,8 @@ end else if (~old_m2 & m2) begin
 			end
 		endcase
 	end
-end // if m2
+	end // if m2 (register writes stay CPU-paced)
+end // else
 end
 
 always @(posedge clk) begin

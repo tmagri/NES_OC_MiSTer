@@ -696,6 +696,8 @@ endmodule
 module mmc5_mixed (
 	input         clk,
 	input         ce,    // Negedge M2 (aka CPU ce)
+	input         audio_ce, // Async OC: native 1.78MHz, never stalls
+	input         async_oc, // Async OC: switch audio onto audio_ce
 	input         enable,
 	input         wren,
 	input         rden,
@@ -724,12 +726,16 @@ wire [15:0] DmaAddr;  // Address DMC wants to read
 reg odd_or_even;
 wire apu_irq;         // TODO: IRQ asserted
 
+// Async OC: the MMC5's APU runs from the never-stalling native audio_ce.
+// Legacy resolves to master's exact ce.
+wire mmc5_apu_ce = async_oc ? audio_ce : ce;
+
 reg phi2;
 always @(posedge clk) begin
-	phi2 <= ce;
+	phi2 <= ce; // Register writes stay aligned with the CPU-side clock
 	if (~enable)
 		odd_or_even <= 0;
-	else if (ce)
+	else if (mmc5_apu_ce)
 		odd_or_even <= ~odd_or_even;
 
 	if (SaveStateBus_load) begin
@@ -743,7 +749,7 @@ assign SS_MAP1_BACK[63: 1] = 63'b0; // free to be used
 APU mmc5apu(
 	.MMC5           (1),
 	.clk            (clk),
-	.ce             (ce),
+	.ce             (mmc5_apu_ce),
 	.PHI2           (phi2),
 	.CS             (apu_cs),
 	.reset          (~enable | SaveStateBus_load),

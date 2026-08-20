@@ -15,13 +15,24 @@ A comprehensive suite of overclocking options designed to eliminate slowdowns wh
 
 * **VBlank Extension:** A CPU-only overclocking method that utilizes VBlank extension to increase CPU frequency while maintaining standard 60fps video and cycle-accurate audio. Required for games like *Parodius* and *Castlevania III \[J\]* which use strict cycle-counting IRQs and break if the NMI is delayed.
 
+* **Async (experimental):** Breaks the strict CPU/PPU cycle alignment: the PPU stays locked at its native 1× rate while the CPU free-runs at up to ~4×, inserting wait-states whenever it outruns memory or the PPU. All audio hardware (APU and expansion chips) is clocked at the native 1.78MHz regardless of the overclock, so music pitch is never dilated. Reaches much higher CPU speeds than the other methods, but gives up cycle accuracy — if a game misbehaves on Async, fall back to Postrender or VBlank. **Auto never selects Async**; it must be chosen explicitly.
+
 **Performance Modes:**
 
-* **Medium (1.50×) Mode:** A stable intermediate performance boost using dynamic PPU clocking and anti-jitter logic. Ideal and recommended for most games.
+The CPU Overclock levels (Off/Plus/Turbo/Maximum) map to different multipliers depending on the selected OC Method:
 
-* **Extreme (2.00×) Mode:** Doubles the CPU speed (2x baseline performance). Uses a dedicated 1.78MHz mapper clock for proper cycle synchronisation to preserve compatibility with complex mappers. Recommended for simple games (non complex mapper use).
+| OC Level  | Postrender / VBlank | Async               |
+|-----------|---------------------|---------------------|
+| Off       | 1.00×               | 1.00×               |
+| Plus      | 1.33×               | 2.00×               |
+| Turbo     | 1.50×               | 3.00×               |
+| Maximum   | 2.00×               | up to ~4.00×        |
 
-* **APU Pitch Correction:** Dynamically scales expansion audio. Ensures that mappers with internal sound hardware (like VRC6/VRC7) maintain their original pitch and timing during overclocked gameplay.
+* **Postrender / VBlank:** The CPU and PPU are overclocked together (kept at the hardware 3:1 ratio) and the frame is padded to preserve 60fps video. Turbo (1.50×) uses dynamic PPU clocking and anti-jitter logic and is ideal and recommended for most games. Maximum (2.00×) doubles the CPU speed and uses a dedicated 1.78MHz mapper clock for proper cycle synchronisation to preserve compatibility with complex mappers; recommended for simple games (non complex mapper use).
+
+* **Async:** The PPU always runs at 1×, so no frame padding is needed; the CPU simply runs ahead of it. Wait-states are inserted on SDRAM cache misses and whenever the CPU accesses PPU registers, so the effective speedup varies by game and Maximum may yield less than the nominal ~4×.
+
+* **APU Pitch Correction:** Dynamically scales expansion audio. Ensures that mappers with internal sound hardware (like VRC6/VRC7) maintain their original pitch and timing during overclocked gameplay. Used by the Postrender/VBlank methods; with Async the audio is inherently native-rate, so expansion audio plays at true 1× pitch at every overclock level.
 
 ### **High-Fidelity Stereo Audio Overhaul**
 

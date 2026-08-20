@@ -241,8 +241,8 @@ parameter CONF_STR = {
 	"d7rA,Save state(Alt+F1-F4);",
 	"d7rB,Restore state(F1-F4);",
 	"-;",
-	"O[72:71],CPU Overclock,Off,Turbo (1.33x),Medium (1.50x),Extreme (2.00x);",
-	"O[79:78],OC Method,Auto,Postrender,VBlank;",
+	"O[72:71],CPU Overclock,Off,Plus,Turbo,Maximum;",
+	"O[79:78],OC Method,Auto,Postrender,VBlank,Async;",
 	"-;",
 	"P1,Audio & Video;",
 	"P1-;",
@@ -398,8 +398,6 @@ always @(posedge clk) begin : osd_block
 		end
 	end
 end
-
-wire apu_ce;
 
 reg  [31:0] sd_lba;
 reg         sd_rd = 0;
@@ -588,7 +586,7 @@ reg   [7:0] joypad_d3, joypad_d4;
 reg   [1:0] last_joypad_clock;
 
 wire [15:0] sample_sq1, sample_sq2, sample_tri, sample_noi, sample_dmc, sample_ext;
-wire [15:0] audio_l_pre, audio_r_pre, audio_l_stretched, audio_r_stretched;
+wire [15:0] audio_l_pre, audio_r_pre;
 wire stereo_en = status[74];
 
 // sample_ext now contains PURE expansion audio (APU is muted to the cart)
@@ -620,26 +618,11 @@ wire [16:0] right_mix = apu_r_sum + {1'b0, exp_only} + 17'h02000;
 assign audio_l_pre = left_mix[16]  ? 16'hFFFF : left_mix[15:0];
 assign audio_r_pre = right_mix[16] ? 16'hFFFF : right_mix[15:0];
 
-// Audio Stretching (Set to 1.0x as pitch is now corrected internally in APU/Mappers)
-audio_stretch stretch_l (
-	.clk(clk),
-	.sample_ce(apu_ce),
-	.sample_in(audio_l_pre),
-	.overclock(2'd0),
-	.sample_out(audio_l_stretched)
-);
-
-audio_stretch stretch_r (
-	.clk(clk),
-	.sample_ce(apu_ce),
-	.sample_in(audio_r_pre),
-	.overclock(2'd0),
-	.sample_out(audio_r_stretched)
-);
-
 // Final outputs
-wire [15:0] audio_l_final = audio_l_stretched;
-wire [15:0] audio_r_final = audio_r_stretched;
+// (audio_stretch removed: it was already a 1.0x passthrough on master since pitch is
+//  corrected internally in the APU/mappers, and Async OC keeps all audio native-rate.)
+wire [15:0] audio_l_final = audio_l_pre;
+wire [15:0] audio_r_final = audio_r_pre;
 
 wire [11:0] powerpad = joyA[22:11] | joyB[22:11] | joyC[22:11] | joyD[22:11];
 
@@ -969,10 +952,14 @@ wire is_vblank_mapper =
 // 1 = Postrender, 0 = VBlank
 wire auto_oc_method = is_vblank_mapper ? 1'b0 : 1'b1;
 
-wire selected_oc_method = 
-	(status[79:78] == 2'd0) ? auto_oc_method : 
+wire selected_oc_method =
+	(status[79:78] == 2'd0) ? auto_oc_method :
 	(status[79:78] == 2'd1) ? 1'b1 : // Postrender
-	1'b0;                            // VBlank
+	1'b0;                            // VBlank (also the fallback when Async is selected)
+
+// Async OC: PPU locked at 1x, CPU free-runs (2x/3x/4x) with wait-states,
+// audio stays at native 1.78MHz. Auto never selects Async.
+wire oc_async = (status[79:78] == 2'd3);
 
 wire [3:0] auto_detected_key;
 wire       native_is_minor;
@@ -1026,7 +1013,6 @@ NES nes (
 	.root_key        (active_root_key),
 	.detected_key    (auto_detected_key),
 	.native_is_minor (native_is_minor),
-	.apu_ce          (apu_ce),
 	// Video
 	.ex_sprites      (status[25]),
 	.color           (color),
@@ -1059,6 +1045,7 @@ NES nes (
 	.cpumem_write    (cpu_write),
 	.cpumem_dout     (cpu_dout ),
 	.cpumem_din      (cpu_din  ),
+	.cpumem_busy     (cpu_busy ),
 	.ppumem_addr     (ppu_addr ),
 	.ppumem_read     (ppu_read ),
 	.ppumem_write    (ppu_write),
@@ -1106,13 +1093,15 @@ NES nes (
 	.SAVE_out_be             (ss_be),
 	.SAVE_out_done           (ss_ack),           // should be one cycle high when write is done or read value is valid
 	.overclock               (status[72:71]),
-	.oc_method               (selected_oc_method)
+	.oc_method               (selected_oc_method),
+	.async_oc                (oc_async)
 );
 
 wire [24:0] cpu_addr;
 wire [21:0] ppu_addr;
 wire        cpu_read, cpu_write, ppu_read, ppu_write;
 wire  [7:0] cpu_dout, cpu_din, ppu_dout, ppu_din;
+wire        cpu_busy; // SDRAM ch1 busy: wait-state source for async CPU overclock
 
 wire [2:0] emphasis;
 
@@ -1202,7 +1191,7 @@ sdram sdram
 	.ch1_din    ( cpu_dout  ),
 	.ch1_rd     ( cpu_read  ),
 	.ch1_dout   ( cpu_din   ),
-	.ch1_busy   ( ),
+	.ch1_busy   ( cpu_busy  ),
 
 	// reserved for backup ram save/load
 	.ch2_addr   ( ch2_addr ),
