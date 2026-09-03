@@ -391,6 +391,7 @@ wire mapper47 =  (flags[7:0] == 47);		// Mapper 47 is a multicart that has 128k 
 wire mapper37 =  (flags[7:0] == 37);    // European Triple Cart (Super Mario, Tetris, Nintendo World Cup)
 wire DxROM =     (flags[7:0] == 206);
 wire mapper112 = (flags[7:0] == 112);   // Ntdec
+wire no_prot = mapper112;
 wire mapper48 =  (flags[7:0] == 48);    // Taito's TC0690
 wire mapper33 =  (flags[7:0] == 33);    // Taito's TC0190 (TC0690-like. No IRQ. Different Mirroring bit)
 wire mapper95 =  (flags[7:0] == 95);    // NAMCOT-3425
@@ -734,7 +735,7 @@ if (~enable) begin
 	mirroring <= flags[14];
 	{irq_enable, irq_reload} <= 0;
 	{irq_latch, counter} <= 0;
-	ram_enable <= {4{mapper112}};
+	ram_enable <= 0;
 	ram_protect <= 0;
 	{chr_bank_0, chr_bank_1} <= 0;
 	{chr_bank_2, chr_bank_3, chr_bank_4, chr_bank_5} <= 0;
@@ -1545,7 +1546,7 @@ wire ram_a13 = mapper268 && m268_reg[3][5] && (prg_ain[15:12] == 4'h5);
 // Mapper 198: $5000-$7FFF mapped as work RAM
 wire m198_ram = mapper198 && prg_ain[15:13] == 3'b010;
 assign prg_is_ram = (ram_a13 || m198_ram || (prg_ain[15:13] == 3'b011) && ((prg_ain[12:8] == 5'b1_1111) | ~internal_128)) //(>= 'h6000 && < 'h8000) && (==7Fxx or external_ram)
-					&& (m198_ram || (ram_enable_a && !(ram_protect_a && prg_write)));
+					&& (m198_ram || ((ram_enable_a && !(ram_protect_a && prg_write)) || no_prot));
 assign prg_allow = prg_ain[15] && !prg_write || (prg_is_ram && !mapper47 && !mapper208);
 wire [21:0] prg_ram = {8'b11_1100_00, ram_a13, internal_128 ? 6'b000000 : MMC6 ? {3'b000, prg_ain[9:7]} : prg_ain[12:7], prg_ain[6:0]};
 assign prg_aout = prg_is_ram  && !mapper47 && !mapper208 && !DxROM && !mapper95 && !mapper88 ? prg_ram : prg_aout_tmp;
