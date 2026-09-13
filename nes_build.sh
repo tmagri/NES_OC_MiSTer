@@ -97,9 +97,16 @@ echo "Compiling $PROJECT_REVISION with $QUARTUS_IMAGE"
 	"$QUARTUS_IMAGE" \
 	bash -c "export PATH=\"\$PATH:/opt/intelFPGA_lite/17.0/quartus/bin:/intelFPGA_lite/17.0/quartus/bin\" && if ! grep -q '^[[:space:]]*set_global_assignment -name NUM_PARALLEL_PROCESSORS[[:space:]]' '$QSF_NAME'; then echo 'set_global_assignment -name NUM_PARALLEL_PROCESSORS 1' >> '$QSF_NAME'; fi && quartus_sh --flow compile '$QPF_NAME'"
 
-[[ -f "$RBF_FILE" ]] || {
+# The RBF can take a moment to appear through the Docker bind mount (macOS
+# file-sync lag), so poll briefly before declaring failure.
+RBF_OK=0
+for _ in $(seq 1 20); do
+	if [[ -f "$RBF_FILE" ]]; then RBF_OK=1; break; fi
+	sleep 1
+done
+if [[ "$RBF_OK" != 1 ]]; then
 	echo "Compilation finished but no RBF was produced: $RBF_FILE" >&2
 	exit 1
-}
+fi
 
 echo "Compiled successfully: $RBF_FILE"

@@ -696,8 +696,7 @@ endmodule
 module mmc5_mixed (
 	input         clk,
 	input         ce,    // Negedge M2 (aka CPU ce)
-	input         audio_ce, // Async OC: native 1.78MHz, never stalls
-	input         async_oc, // Async OC: switch audio onto audio_ce
+	input         audio_ce, // Native 1.78MHz, never stalls (turbo-independent)
 	input         enable,
 	input         wren,
 	input         rden,
@@ -726,9 +725,9 @@ wire [15:0] DmaAddr;  // Address DMC wants to read
 reg odd_or_even;
 wire apu_irq;         // TODO: IRQ asserted
 
-// Async OC: the MMC5's APU runs from the never-stalling native audio_ce.
-// Legacy resolves to master's exact ce.
-wire mmc5_apu_ce = async_oc ? audio_ce : ce;
+// The MMC5's APU runs from the never-stalling native audio_ce so its rate
+// never follows the CPU turbo.
+wire mmc5_apu_ce = audio_ce;
 
 reg phi2;
 always @(posedge clk) begin

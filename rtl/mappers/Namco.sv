@@ -388,8 +388,7 @@ endmodule
 module namco163_mixed (
 	input         clk,
 	input         ce,
-	input         audio_ce, // Async OC: native 1.78MHz, never stalls
-	input         async_oc, // Async OC: switch audio onto audio_ce
+	input         audio_ce, // Native 1.78MHz, never stalls (turbo-independent)
 	input   [3:0] submapper,
 	input         enable,
 	input         wren,
@@ -435,7 +434,7 @@ wire [10:0] n163_out;
 
 namco163_sound n163
 (
-	clk, ce, audio_ce, async_oc, enable, wren, addr_in, data_in, data_out, n163_out,
+	clk, ce, audio_ce, enable, wren, addr_in, data_in, data_out, n163_out,
 	// savestates
 	SaveStateBus_Din, 
 	SaveStateBus_Adr,
@@ -473,8 +472,7 @@ endmodule
 module namco163_sound(
 	input clk20,
 	input m2,
-	input audio_ce, // Async OC: native 1.78MHz, never stalls
-	input async_oc, // Async OC: switch audio onto audio_ce
+	input audio_ce, // Native 1.78MHz, never stalls (turbo-independent)
 	input enable,
 	input wr,
 	input [15:0] ain,
@@ -551,9 +549,9 @@ reg [3:0] count45,cnt45;
 always@(posedge clk20) begin
 	if (SaveStateBus_load) begin
 		count45 <= SS_MAP1[12: 9];
-	// Async OC: the audio-rate divider runs from the never-stalling native
-	// audio_ce; register writes above stay on m2. Legacy keeps master's clock.
-	end else if (async_oc ? audio_ce : m2) begin
+	// The audio-rate divider runs from the never-stalling native audio_ce;
+	// register writes above stay on m2.
+	end else if (audio_ce) begin
 		count45<=(count45==14)?4'd0:count45+1'd1;
 	end
 end

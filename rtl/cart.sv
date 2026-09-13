@@ -64,9 +64,8 @@ module cart_top (
 	input       [1:0] max_diskside,   // FDS disk side count
 	input             fds_fast,       // FDS disk access speed
 	input             mapper_ce,      // Standard ~1.78MHz CPU speed
-	input             audio_ce,       // Async OC: native 1.78MHz audio clock, never stalls
-	input             async_oc,       // Async OC: audio runs on audio_ce instead of cart ce
-	input             put_ce,         // CPU write phase clock enable (for synchronized expansion audio)
+	input             audio_ce,       // Native 1.78MHz audio clock, never stalls (turbo-independent)
+	input             put_ce,         // Native put phase clock enable (for synchronized expansion audio)
 	input             mapper_irq_pause, // Pause cycle-based mappers during OC extended Vblank
 	input       [1:0] overclock,      // Overclock mode (0=off, 1=turbo, 2=medium, 3=extreme)
 	input             smooth_audio,   // Smooth Audio option
@@ -2564,7 +2563,6 @@ SS5b_mixed snd_5bm (
 	.clk(clk),
 	.ce(ce),
 	.audio_ce(audio_ce),
-	.async_oc(async_oc),
 	.enable(me[69] | (me[31] && exp_audioe[5])),
 	.wren(prg_write),
 	.addr_in(prg_ain),
@@ -2586,7 +2584,6 @@ namco163_mixed snd_n163 (
 	.clk(clk),
 	.ce(ce),
 	.audio_ce(audio_ce),
-	.async_oc(async_oc),
 	.submapper(flags[24:21]),
 	.enable(me[19] | (me[31] && exp_audioe[4])),
 	.wren(prg_write),
@@ -2617,7 +2614,6 @@ mmc5_mixed snd_mmc5 (
 	.clk(clk),
 	.ce(ce),
 	.audio_ce(audio_ce),
-	.async_oc(async_oc),
 	.enable(me[5] | (me[31] && exp_audioe[3])),
 	.wren(prg_write),
 	.rden(prg_read),
@@ -2641,7 +2637,6 @@ fds_mixed snd_fds (
 	.clk(clk),
 	.ce(ce),
 	.audio_ce(audio_ce),
-	.async_oc(async_oc),
 	.enable(me[20] | (me[31] && exp_audioe[2])),
 	.wren(prg_write),
 	.addr_in(prg_ain),
@@ -2663,7 +2658,6 @@ vrc7_mixed snd_vrc7 (
 	.clk(clk),
 	.ce(ce),
 	.audio_ce(audio_ce),
-	.async_oc(async_oc),
 	.enable(me[85] | (me[31] && exp_audioe[1])),
 	.wren(prg_write),
 	.addr_in(prg_ain),
@@ -2679,7 +2673,6 @@ vrc6_mixed snd_vrc6 (
 	.clk(clk),
 	.ce(ce),
 	.audio_ce(audio_ce),
-	.async_oc(async_oc),
 	.enable(me[24] | me[26] | (me[31] && exp_audioe[0])),
 	.wren(prg_write),
 	.addr_invert(me[26]),

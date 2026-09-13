@@ -1279,8 +1279,8 @@ module PPU(
 	input         extra_sprites,
 	input  [1:0]  mask,
 	input [9:0]   extra_lines,
-	input         oc_method,
-	input         async_oc,      // Async OC: PPU locked at 1x while CPU free-runs with wait-states
+	input  [1:0]  oc_method,      // CE Turbo window: 0=VBlank only, 1=Postrender, 2=incl. pre-render
+	output        turbo_window,   // 1 = outside the visible frame; CPU CE may tighten there
 	output        render_ena_out,
 	output        evenframe,
 	// savestates
@@ -1411,7 +1411,7 @@ ClockGen clock(
 	.vsync               (vsync),
 	.hblank              (hblank),
 	.vblank              (vblank),
-	.oc_method           (oc_method),
+	.oc_method           (oc_method[0]),  // bit 0: place extra_lines offsets on vblank flags
 	// savestates
 	.SaveStateBus_Din  (SaveStateBus_Din ),
 	.SaveStateBus_Adr  (SaveStateBus_Adr ),
@@ -1421,6 +1421,20 @@ ClockGen clock(
 	.SaveStateBus_Dout (SaveStateBus_wired_or[2])
 );
 defparam clock.USE_SAVESTATE = 1;
+
+// CE Turbo window: true on every scanline where no visible pixel is
+// generated and the CPU CE may tighten. Derived from the ClockGen state so
+// PAL/Dendy vblank positions are handled automatically:
+//   oc_method == 0 : VBlank only        (vblank flag period, 241/291 .. end)
+//   oc_method == 1 : Postrender         (line 240 .. last vblank line)
+//   oc_method == 2 : CE Turbo (full)    (line 240 .. pre-render line)
+// The pre-render line is reported by ClockGen as scanline 10'h3FF, which the
+// >= 240 comparisons treat as part of the window (excluded again for
+// oc_method == 1 via is_pre_render_line).
+assign turbo_window =
+	(oc_method == 2'd0) ? is_in_vblank :
+	(oc_method == 2'd1) ? ((scanline >= 10'd240) && ~is_pre_render_line) :
+	                      (scanline >= 10'd240);
 
 // The vram module handles updating of the vram address
 wire [14:0] vram;
@@ -1828,9 +1842,10 @@ wire clear_nmi = (clear_signal | (read && ain == 2));
 wire set_nmi = entering_vblank & ~clear_nmi;
 
 // --- Protect $2002 polling during Overclocking ---
-// Async OC has extra_lines == 0 (native frame) but still runs the CPU faster
-// than the PPU, so the vblank-race protection must stay enabled for it.
-wire oc_active = (|extra_lines) || async_oc;
+// extra_lines is always 0 (native frame) now, but the CE turbo still runs
+// the CPU faster than the PPU inside the turbo window, so the vblank-race
+// protection stays enabled there.
+wire oc_active = (|extra_lines) || turbo_window;
 reg oc_vblank_race;
 
 always @(posedge clk) begin

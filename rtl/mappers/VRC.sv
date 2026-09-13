@@ -1086,8 +1086,7 @@ module vrc7_mixed (
 	input         clk,
 	input         ce,
 	input         mapper_ce,
-	input         audio_ce, // Async OC: native 1.78MHz, never stalls
-	input         async_oc, // Async OC: switch audio onto audio_ce
+	input         audio_ce, // Native 1.78MHz, never stalls (turbo-independent)
 	input        smooth_audio,
 	input  [1:0] scale_mode,
 	input  [3:0] root_key,
@@ -1110,10 +1109,9 @@ always@(posedge clk) begin
 	end
 end
 
-// Async OC: regenerate the YM2413 clock-enable pattern from the native-rate
-// audio_ce (two ticks per 12 master clocks = 3.58MHz) instead of the
-// overclocked cart ce; legacy keeps master's exact expression.
-wire ce_ref = async_oc ? audio_ce : ce;
+// The YM2413 reference tick is the native-rate audio_ce so its rate (and
+// therefore pitch) never follows the CPU turbo.
+wire ce_ref = audio_ce;
 reg [3:0] ce_count;
 always@(posedge clk) begin
 	if (~enable)
@@ -1125,13 +1123,12 @@ always@(posedge clk) begin
 end
 
 wire ack;
-wire ce_ym2143 = async_oc ? (audio_ce | (ce_count==4'd5)) : (ce | (ce_count==4'd5));
+wire ce_ym2143 = audio_ce | (ce_count==4'd5);  // 2 ticks per 12 masters = 3.58MHz
 wire signed [13:0] ym2143audio;
 wire wr_audio = wren && (addr_in[15:6]==10'b1001_0000_00) && (addr_in[4:0]==5'b1_0000); //0x9010 or 0x9030
 
-// Async OC: the fast free-running CPU makes write windows too short to rely on
-// hitting a ce_ym2143 tick, so latch the write and hold the request until the
-// OPLL acknowledges it. Legacy keeps the direct connection.
+// The OPLL write is latched and held until the OPLL acknowledges it, so no
+// register write is ever missed regardless of the CPU rate.
 reg        opll_wr_pend;
 reg [5:0]  opll_addr_lat;
 reg [7:0]  opll_data_lat;
@@ -1147,10 +1144,10 @@ always@(posedge clk) begin
 			opll_wr_pend <= 1'b0;
 	end
 end
-wire opll_req = async_oc ? opll_wr_pend        : ce_ym2143;
-wire opll_wrt = async_oc ? opll_wr_pend        : wr_audio;
-wire [15:0] opll_adr = async_oc ? {10'b0, opll_addr_lat} : {15'b0, addr_in[5]};
-wire [7:0]  opll_dbo = async_oc ? opll_data_lat          : data_in;
+wire opll_req = opll_wr_pend;
+wire opll_wrt = opll_wr_pend;
+wire [15:0] opll_adr = {10'b0, opll_addr_lat};
+wire [7:0]  opll_dbo = opll_data_lat;
 eseopll ym2143vrc7 (clk,~enable, ce_ym2143,opll_wrt,opll_req,ack,opll_wrt,opll_adr,opll_dbo,ym2143audio);
 
 // The strategy here:
@@ -1173,8 +1170,7 @@ module vrc6_mixed (
 	input         clk,
 	input         ce,    // Negedge M2 (aka CPU ce)
 	input         mapper_ce,
-	input         audio_ce, // Async OC: native 1.78MHz, never stalls
-	input         async_oc, // Async OC: switch audio onto audio_ce
+	input         audio_ce, // Native 1.78MHz, never stalls (turbo-independent)
 	input         put_ce,
 	input   [1:0] overclock,
 	input        smooth_audio,
@@ -1187,7 +1183,7 @@ module vrc6_mixed (
 	input   [7:0] data_in,
 	input  [15:0] audio_in,    // Inverted audio from APU
 	output [15:0] audio_out,
-	// savestates              
+	// savestates
 	input       [63:0]  SaveStateBus_Din,
 	input       [ 9:0]  SaveStateBus_Adr,
 	input               SaveStateBus_wren,
@@ -1200,7 +1196,6 @@ vrc6sound snd_vrc6 (
 	.clk(clk),
 	.ce(ce),
 	.audio_ce(audio_ce),
-	.async_oc(async_oc),
 	.put_ce(put_ce),
 	.overclock(overclock),
 	.enable(enable),
@@ -1255,8 +1250,7 @@ endmodule
 module vrc6sound(
 	input clk,
 	input ce,
-	input audio_ce, // Async OC: native 1.78MHz, never stalls
-	input async_oc, // Async OC: switch audio onto audio_ce
+	input audio_ce, // Native 1.78MHz, never stalls (turbo-independent)
 	input put_ce,
 	input [1:0] overclock,
 	input enable,
@@ -1365,29 +1359,8 @@ wire [7:0]  inc_1  = err_2 >= fa_1 ? 8'd1 : 8'd0;
 
 wire [7:0] total_inc = inc_32 + inc_16 + inc_8 + inc_4 + inc_2 + inc_1;
 
-// -----------------------------------------------------------------------
-// Overclock Pitch Corrector (Synchronized with APU)
-// Frequency dividers must tick at 1.78MHz rate to preserve correct pitch.
-// This logic skips cycles of the overclocked `ce` to maintain 1x speed.
-// -----------------------------------------------------------------------
-reg [1:0] pitch_cnt = 0;
-always @(posedge clk) begin
-	if (~enable)
-		pitch_cnt <= 0;
-	else if (ce) begin
-		case (overclock)
-			2'd1:    pitch_cnt <= (pitch_cnt == 2'd3) ? 2'd0 : pitch_cnt + 2'd1; // 1.33x -> skip 1 of 4 (3/4 rate)
-			2'd2:    pitch_cnt <= (pitch_cnt == 2'd2) ? 2'd0 : pitch_cnt + 2'd1; // 1.50x -> skip 1 of 3 (2/3 rate)
-			2'd3:    pitch_cnt <= (pitch_cnt == 2'd1) ? 2'd0 : pitch_cnt + 2'd1; // 2.00x -> skip 1 of 2 (1/2 rate)
-			default: pitch_cnt <= 2'd0;
-		endcase
-	end
-end
-
-wire pitch_ce = (overclock == 2'd1) ? (pitch_cnt != 2'd3) :
-                (overclock == 2'd2) ? (pitch_cnt != 2'd2) :
-                (overclock == 2'd3) ? (pitch_cnt == 2'd0) :
-                1'b1;
+// (The old pitch corrector is gone: the freq dividers tick on the
+// native-rate audio_ce, so no skip logic is needed.)
 
 always@(posedge clk) begin
 	if(~enable) begin
@@ -1437,9 +1410,9 @@ always@(posedge clk) begin
 				16'hB002: {en2, freq2[11:8]}<={din[7],din[3:0]};
 			endcase
 		end
-		// Async OC: run the freq dividers at native-rate audio_ce directly;
-		// legacy keeps master's ce & pitch_ce (pitch corrector skips overclocked ces)
-		if(async_oc ? audio_ce : (ce & pitch_ce)) begin
+		// Freq dividers tick on the native-rate audio_ce so pitch never
+		// follows the CPU turbo.
+		if(audio_ce) begin
 			if(en0) begin
 				if(div0!=0)
 					div0<=div0-1'd1;

@@ -424,7 +424,7 @@ wire        forced_scandoubler;
 
 wire [21:0] gamma_bus;
 
-hps_io #(.CONF_STR(CONF_STR)) hps_io
+hps_io_stub hps_io
 (
 	.clk_sys(clk),
 	.HPS_BUS(HPS_BUS),
@@ -491,17 +491,15 @@ wire clock_locked;
 wire clk85;
 wire clk;
 
-pll pll
-(
-	.refclk(CLK_50M),
-	.rst(0),
-	.outclk_0(clk85),
-	.outclk_1(CLK_VIDEO),
-	.outclk_2(clk),
-	.reconfig_to_pll(reconfig_to_pll),
-	.reconfig_from_pll(reconfig_from_pll),
-	.locked(clock_locked)
-);
+// SIM: behavioral clocks (replaces pll instance)
+	reg clk_r = 0;
+	always #(23.28) clk_r = ~clk_r;
+	assign clk = clk_r;
+	reg clk_r85 = 0;
+	always #(5.82) clk_r85 = ~clk_r85;
+	assign clk85 = clk_r85;
+	assign CLK_VIDEO = clk;
+	assign clock_locked = 1'b1;
 
 wire [63:0] reconfig_to_pll;
 wire [63:0] reconfig_from_pll;
@@ -510,19 +508,7 @@ reg         cfg_write;
 reg   [5:0] cfg_address;
 reg  [31:0] cfg_data;
 
-pll_cfg pll_cfg
-(
-	.mgmt_clk(CLK_50M),
-	.mgmt_reset(0),
-	.mgmt_waitrequest(cfg_waitrequest),
-	.mgmt_read(0),
-	.mgmt_readdata(),
-	.mgmt_write(cfg_write),
-	.mgmt_address(cfg_address),
-	.mgmt_writedata(cfg_data),
-	.reconfig_to_pll(reconfig_to_pll),
-	.reconfig_from_pll(reconfig_from_pll)
-);
+// SIM: pll_cfg removed
 
 always @(posedge CLK_50M) begin : cfg_block
 	reg pald = 0, pald2 = 0;
@@ -1167,7 +1153,7 @@ wire        ch2_rd   = sleep_savestate ? Savestate_SDRAMRdEn      : save_rd;
 
 assign Savestate_SDRAMReadData = save_dout;
 
-sdram sdram
+sdram_sim sdram
 (
 	.*,
 

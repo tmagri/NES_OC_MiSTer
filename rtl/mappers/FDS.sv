@@ -563,8 +563,7 @@ endmodule
 module fds_mixed (
 	input         clk,
 	input         ce,    // Negedge M2 (aka CPU ce)
-	input         audio_ce, // Async OC: native 1.78MHz, never stalls
-	input         async_oc, // Async OC: switch audio onto audio_ce
+	input         audio_ce, // Native 1.78MHz, never stalls (turbo-independent)
 	input         enable,
 	input         wren,
 	input  [15:0] addr_in,
@@ -587,7 +586,6 @@ fds_audio fds_audio
 	.clk(clk),
 	.m2(ce),
 	.audio_ce(audio_ce),
-	.async_oc(async_oc),
 	.reset(!enable),
 	.wr(wren),
 	.addr_in(addr_in),
@@ -652,8 +650,7 @@ endmodule
 module fds_audio(
 	input            clk,
 	input            m2,
-	input            audio_ce, // Async OC: native 1.78MHz, never stalls
-	input            async_oc, // Async OC: switch audio onto audio_ce
+	input            audio_ce, // Native 1.78MHz, never stalls (turbo-independent)
 	input            reset,
 	input            wr,
 	input     [15:0] addr_in,
@@ -808,9 +805,9 @@ end else if (Savestate_MAPRAMWrEn) begin
 		default: ;
 	endcase
 end else begin
-	// Async OC: the sound engine ticks from the never-stalling native audio_ce;
-	// legacy keeps master's exact m2-rising-edge clock.
-	if (async_oc ? audio_ce : (~old_m2 & m2)) begin
+	// The sound engine ticks from the never-stalling native audio_ce so its
+	// rate never follows the CPU turbo.
+	if (audio_ce) begin
 	//**** Timings ****//
 	cycles <= wave_disable ? 4'h0 : cycles + 1'b1;
 

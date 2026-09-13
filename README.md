@@ -10,29 +10,30 @@ This is an FPGA implementation of the NES/Famicom based on [FPGANES](https://git
 
 A comprehensive suite of overclocking options designed to eliminate slowdowns while improving compatibility and stability across the NES library.
 
-* **Auto (Default):** Intelligently selects the best OC method based on the loaded game's mapper. It defaults to the highly stable Postrender method for most games, but automatically switches to VBlank Extension for specialised mappers (like Konami VRC and MMC5) that require strict hardware synchronisation.
-* **Postrender Overclock:** Applies overclocking after the PPU’s render phase. Avoids CPU/PPU timing conflicts, especially around $2002 reads, reduces visual glitches, and improves frame pacing. Essential for eliminating lag in CPU-heavy games like *Kirby's Adventure*, *Final Fantasy III \[J\]*, and *Super Mario Bros 2 \[FDS\]*.
+* **Auto (Default):** Intelligently selects the best turbo window based on the loaded game's mapper. It defaults to the Postrender window for most games, but automatically switches to the VBlank-only window for specialised mappers (like Konami VRC and MMC5) that require strict hardware synchronisation.
 
-* **VBlank Extension:** A CPU-only overclocking method that utilizes VBlank extension to increase CPU frequency while maintaining standard 60fps video and cycle-accurate audio. Required for games like *Parodius* and *Castlevania III \[J\]* which use strict cycle-counting IRQs and break if the NMI is delayed.
+* **Postrender Window:** Applies the CE turbo after the PPU's visible frame (scanline 240 through the last vblank line). Avoids CPU/PPU timing conflicts, especially around $2002 reads, reduces visual glitches, and improves frame pacing. Essential for eliminating lag in CPU-heavy games like *Kirby's Adventure*, *Final Fantasy III \[J\]*, and *Super Mario Bros 2 \[FDS\]*.
 
-* **Async (experimental):** Breaks the strict CPU/PPU cycle alignment: the PPU stays locked at its native 1× rate while the CPU free-runs at up to ~4×, inserting wait-states whenever it outruns memory or the PPU. All audio hardware (APU and expansion chips) is clocked at the native 1.78MHz regardless of the overclock, so music pitch is never dilated. Reaches much higher CPU speeds than the other methods, but gives up cycle accuracy — if a game misbehaves on Async, fall back to Postrender or VBlank. **Auto never selects Async**; it must be chosen explicitly.
+* **VBlank Window:** The most conservative option: the turbo only runs inside the VBlank flag period. Required for games like *Parodius* and *Castlevania III \[J\]* which use strict cycle-counting IRQs and are sensitive to extra CPU time right after the visible frame.
+
+* **CE Turbo (full window):** The turbo runs on every non-visible scanline (post-render, VBlank, and the pre-render line), giving the CPU maximum headroom to finish its frame work before rendering restarts. Like every method, the turbo is strictly synchronous: during rendering (scanlines 0-239) the CPU always runs at the exact 1/3 of the PPU dot rate required for raster effects, so sprite-0 hit polling and mid-frame $2006/$2007 writes behave exactly like unoverclocked hardware.
+
+**How the synchronous CE turbo works:**
+
+Everything (CPU, PPU, APU, mappers) runs on the one 21.477272 MHz master clock, paced by clock enables — there are no separate clock domains and no clock gating. The PPU enable is fixed at clk/4 (5.369 MHz, 1×). The CPU enable is clk/12 (1.789 MHz, 1×) while rendering, and tightens to clk/6, clk/4 or clk/3 (2×/3×/4×) inside the selected turbo window. The ratio only ever changes on a CPU cycle boundary, so every CPU cycle keeps the same internal bus layout and ratio switches are glitchless. The APU and all expansion-audio chips tick on a dedicated never-stalling 1.789 MHz enable, so music pitch and cycle-counted IRQ timers are identical at every turbo level. The effective speedup varies by game (the CPU can only use the extra cycles that VBlank-heavy code can exploit).
 
 **Performance Modes:**
 
-The CPU Overclock levels (Off/Plus/Turbo/Maximum) map to different multipliers depending on the selected OC Method:
+The CPU Overclock levels (Off/Plus/Turbo/Maximum) select the turbo ratio inside the window:
 
-| OC Level  | Postrender / VBlank | Async               |
-|-----------|---------------------|---------------------|
-| Off       | 1.00×               | 1.00×               |
-| Plus      | 1.33×               | 2.00×               |
-| Turbo     | 1.50×               | 3.00×               |
-| Maximum   | 2.00×               | up to ~4.00×        |
+| OC Level  | Turbo ratio (all methods) |
+|-----------|---------------------------|
+| Off       | 1.00× (1.789 MHz)         |
+| Plus      | 2.00× (3.579 MHz)         |
+| Turbo     | 3.00× (5.369 MHz)         |
+| Maximum   | 4.00× (7.159 MHz)         |
 
-* **Postrender / VBlank:** The CPU and PPU are overclocked together (kept at the hardware 3:1 ratio) and the frame is padded to preserve 60fps video. Turbo (1.50×) uses dynamic PPU clocking and anti-jitter logic and is ideal and recommended for most games. Maximum (2.00×) doubles the CPU speed and uses a dedicated 1.78MHz mapper clock for proper cycle synchronisation to preserve compatibility with complex mappers; recommended for simple games (non complex mapper use).
-
-* **Async:** The PPU always runs at 1×, so no frame padding is needed; the CPU simply runs ahead of it. Wait-states are inserted on SDRAM cache misses and whenever the CPU accesses PPU registers, so the effective speedup varies by game and Maximum may yield less than the nominal ~4×.
-
-* **APU Pitch Correction:** Dynamically scales expansion audio. Ensures that mappers with internal sound hardware (like VRC6/VRC7) maintain their original pitch and timing during overclocked gameplay. Used by the Postrender/VBlank methods; with Async the audio is inherently native-rate, so expansion audio plays at true 1× pitch at every overclock level.
+* **APU Pitch Correction:** With the synchronous CE turbo the APU and expansion audio are inherently native-rate, so expansion audio plays at true 1× pitch at every overclock level without any correction.
 
 ### **High-Fidelity Stereo Audio Overhaul**
 

@@ -204,8 +204,7 @@ endmodule
 module SS5b_mixed (
 	input         clk,
 	input         ce,    // Negedge M2 (aka CPU ce)
-	input         audio_ce, // Async OC: native 1.78MHz, never stalls
-	input         async_oc, // Async OC: switch audio onto audio_ce
+	input         audio_ce, // Native 1.78MHz, never stalls (turbo-independent)
 	input         enable,
 	input         wren,
 	input  [15:0] addr_in,
@@ -225,7 +224,6 @@ SS5b_audio snd_5b (
 	.clk(clk),
 	.ce(ce),
 	.audio_ce(audio_ce),
-	.async_oc(async_oc),
 	.enable(enable),
 	.wren(wren),
 	.addr_in(addr_in),
@@ -257,8 +255,7 @@ endmodule
 module SS5b_audio (
 	input         clk,
 	input         ce,    // Negedge M2 (aka CPU ce)
-	input         audio_ce, // Async OC: native 1.78MHz, never stalls
-	input         async_oc, // Async OC: switch audio onto audio_ce
+	input         audio_ce, // Native 1.78MHz, never stalls (turbo-independent)
 	input         enable,
 	input         wren,
 	input  [15:0] addr_in,
@@ -370,9 +367,9 @@ end else begin
 		end
 	end
 
-	// Async OC: tone/noise counters run from the never-stalling native audio_ce;
-	// legacy keeps master's exact clock (overclocked ce).
-	if (async_oc ? audio_ce : ce) begin
+	// Tone/noise counters run from the never-stalling native audio_ce so
+	// pitch never follows the CPU turbo.
+	if (audio_ce) begin
 		cycles <= cycles + 1'b1;
 
 		tone_a_cnt <= tone_a_next[11:0];
